@@ -13062,10 +13062,23 @@ app.registerExtension({
 
         let pTimer = null;
         const w = (name) => self.widgets?.find(x => x.name === name);
+        const connectedCastData = () => {
+          try {
+            const castInput = self.inputs?.find(x => x.name === "cast");
+            const linkId = castInput?.link;
+            const link = linkId != null ? app.graph?.links?.[linkId] : null;
+            const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+            const castWidget = source?.widgets?.find(x => x.name === "cast_data");
+            return castWidget?.value || source?.properties?.cast_data || "";
+          } catch (_) {
+            return "";
+          }
+        };
         const refreshPrompt = async () => {
           try {
             const body = {
               timeline_data: w("timeline_data")?.value || "",
+              cast_data: connectedCastData(),
               start_frame: w("start_frame")?.value || 0,
               duration_frames: w("duration_frames")?.value || 1,
               frame_rate: w("frame_rate")?.value || 24,

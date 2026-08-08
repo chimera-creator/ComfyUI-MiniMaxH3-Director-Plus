@@ -270,6 +270,10 @@ class MiniMaxH3Director(io.ComfyNode):
                              tooltip="Render length in timeline frames (at the timeline's frame_rate)."),
                 io.String.Input("timeline_data", default="",
                                 tooltip="JSON state of the timeline editor (auto-managed; do not edit by hand)."),
+                io.String.Input(
+                    "cast", force_input=True, optional=True,
+                    tooltip="Optional output from MiniMax H3 Casting Director Plus. When connected, "
+                            "its three character slots replace the Director's built-in character slots."),
                 io.Boolean.Input("use_custom_audio", default=False, optional=True,
                                  tooltip="ON: timeline audio clips are used as <Audio j> references (ref2va). "
                                          "The mixdown is always available on combined_audio regardless."),
@@ -375,10 +379,10 @@ class MiniMaxH3Director(io.ComfyNode):
                 use_custom_audio=False, inpaint_audio=True, use_custom_motion=True,
                 override_audio=False, ref_image_size="match",
                 shift_video=12.0, shift_audio=3.0, ref_images=None,
-                start=None, end=None, duration=None) -> io.NodeOutput:
+                start=None, end=None, duration=None, cast=None) -> io.NodeOutput:
 
         mm = core()
-        tdata = plan.parse_timeline(timeline_data)
+        tdata = plan.merge_cast(plan.parse_timeline(timeline_data), cast)
         fps = float(frame_rate) if frame_rate else 24.0
 
         win_start, duration_frames = resolve_window(

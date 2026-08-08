@@ -11,6 +11,7 @@ come through here. That is what these checks protect.
 Run it after any change to minimax_plan.py, before committing.
 """
 import importlib.util
+import json
 import os
 import sys
 
@@ -189,6 +190,26 @@ check("ref_images input slots sit between character and timeline",
       [s["source"] for s in compile(tl([img(0, 144)], ref_mode="ON", characters=chars),
                                     extra_ref_image_count=2)["ref_image_slots"]],
       ["char", "input", "input", "timeline"])
+
+external_cast = json.dumps({
+    "characters": [{"images": [{"name": "cast.png"}],
+                     "description": "a detective in a blue coat"}],
+})
+merged_cast = plan.merge_cast(
+    tl([img(0, 144)], ref_mode="ON",
+       characters=[{"images": [{"name": "director.png"}],
+                    "description": "the Director fallback"}]),
+    external_cast,
+)
+check("external cast replaces the Director character slots",
+      merged_cast["characters"][0]["images"][0]["name"], "cast.png")
+check_in("external cast descriptions feed @char substitution",
+         "a detective in a blue coat turns around",
+         compile(tl([img(0, 144, prompt="@char1 turns around")], ref_mode="OFF",
+                     characters=merged_cast["characters"]))["prompt"])
+check("malformed external cast preserves the Director timeline",
+      plan.merge_cast({"characters": [{"description": "fallback"}]}, "{not json}")
+      ["characters"][0]["description"], "fallback")
 
 many = compile(tl([img(i * 20, 20, "%d.png" % i) for i in range(14)], ref_mode="ON"))
 check("reference images are capped at the model card's limit",

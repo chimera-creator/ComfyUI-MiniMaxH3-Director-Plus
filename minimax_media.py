@@ -207,7 +207,10 @@ async def compile_prompt_endpoint(request):
     try:
         data = await request.json()
         fps = float(data.get("frame_rate") or 24.0) or 24.0
-        tdata = plan.parse_timeline(data.get("timeline_data") or "")
+        tdata = plan.merge_cast(
+            plan.parse_timeline(data.get("timeline_data") or ""),
+            data.get("cast_data") or data.get("cast"),
+        )
 
         win_start = int(float(data.get("start_frame") or 0))
         duration_frames = max(1, int(float(data.get("duration_frames") or 1)))

@@ -83,6 +83,56 @@ def parse_timeline(timeline_data):
         return {}
 
 
+def parse_cast(cast_data):
+    """Read the JSON emitted by the optional Casting Director node.
+
+    The cast travels through a normal ComfyUI STRING socket so it remains lightweight
+    and workflow-saveable. Keep the parser deliberately forgiving: an unconnected or
+    malformed cast must leave the Director's built-in character slots usable.
+    """
+    if not cast_data:
+        return None
+    if isinstance(cast_data, dict):
+        raw = cast_data
+    else:
+        try:
+            raw = json.loads(cast_data)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("characters"), list):
+        return None
+
+    characters = []
+    for item in raw["characters"][:3]:
+        if not isinstance(item, dict):
+            item = {}
+        images = item.get("images")
+        if not isinstance(images, list):
+            images = []
+        # Accept the legacy single-image shape too, so a cast saved by an older
+        # version still feeds the same planner as the Director's own slots.
+        if not images and item.get("imageB64"):
+            images = [{"b64": item.get("imageB64"),
+                       "name": item.get("fileName", "")}]
+        clean_images = [img for img in images
+                        if isinstance(img, dict) and (img.get("name") or img.get("b64"))]
+        characters.append({
+            "images": clean_images,
+            "description": str(item.get("description") or ""),
+        })
+    return {"characters": characters}
+
+
+def merge_cast(tdata, cast_data):
+    """Overlay an external cast, preserving the built-in Director fallback."""
+    cast = parse_cast(cast_data)
+    if cast is None:
+        return tdata
+    merged = dict(tdata or {})
+    merged.update(cast)
+    return merged
+
+
 def ref_mode_from(tdata):
     """Is the toolbar on 'Refs ON (ref2va)'?
 

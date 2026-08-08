@@ -84,11 +84,12 @@ can read it before you spend a render on it.
 
 ## What you get
 
-Four nodes, category **MiniMax H3**:
+Five nodes, category **MiniMax H3**:
 
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
+| **MiniMax H3 Casting Director Plus** | A reusable three-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
 | **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
@@ -274,6 +275,12 @@ To use it, run a vision model locally and point the gear menu's provider row at 
 
 With Ollama the node also asks it to unload the model before a render, so the VLM does not
 sit in VRAM while H3 samples.
+
+If you want the same cast shared by several Director nodes, use **MiniMax H3 Casting
+Director Plus**. It has the same three `@char1` … `@char3` slots, image upload, manual
+description and Analyze controls. Connect its `CAST` output to each Director's `cast`
+input. An external cast replaces only the Director's character slots; the Director's
+timeline, prompt overrides and sound fields remain independent.
 
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the
