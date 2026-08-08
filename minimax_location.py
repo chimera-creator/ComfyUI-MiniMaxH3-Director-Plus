@@ -1,7 +1,5 @@
 """Location Scout set-reference editor for MiniMax H3 Director Plus."""
 
-import base64
-import io as _io
 import json
 
 import numpy as np
@@ -10,8 +8,8 @@ import torch
 from comfy_api.latest import io
 from PIL import Image, ImageOps
 
-from . import minimax_media as media
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
+from .minimax_context import MiniMaxH3Context, load_reference_image, make_context, project_details
 from .minimax_projects import project_source_data
 
 
@@ -58,22 +56,15 @@ def _normalise_sets(value):
     return items
 
 
-def _load_image(reference):
+def _load_image(reference, context=None):
     try:
-        if reference.get("name"):
-            path = media.resolve_input_path(reference["name"])
-            if path:
-                return Image.open(path).convert("RGB")
-        encoded = reference.get("b64") or ""
-        if encoded:
-            encoded = encoded.split(",", 1)[1] if "," in encoded else encoded
-            return Image.open(_io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        return load_reference_image(reference, context)
     except Exception:
         return None
     return None
 
 
-def _reference_data(cast_wardrobe, items):
+def _reference_data(cast_wardrobe, items, context=None):
     """Return ordered image entries and the JSON cast/wardrobe passthrough."""
     try:
         raw = json.loads(cast_wardrobe) if isinstance(cast_wardrobe, str) else cast_wardrobe
@@ -89,7 +80,7 @@ def _reference_data(cast_wardrobe, items):
     def add_reference(reference, source, description=""):
         if len(entries) >= MAX_REFERENCE_IMAGES:
             return False
-        image = _load_image(reference)
+        image = _load_image(reference, context)
         if image is None:
             return False
         entries.append({
@@ -183,8 +174,8 @@ class MiniMaxH3LocationScout(io.ComfyNode):
             category="MiniMax H3",
             description=(
                 "Collect location and set reference images, descriptions, and picture tags. "
-                "Connect CAST + WARDROBE from Wardrobe Director and CONTEXT plus "
-                "IMAGE REFS to Enhance Prompt."
+                "Connect CAST + WARDROBE from Wardrobe Director and CONTEXT DATA to "
+                "Enhance Prompt; legacy CONTEXT and IMAGE REFS outputs remain available."
             ),
             inputs=[
                 io.String.Input(
@@ -217,6 +208,10 @@ class MiniMaxH3LocationScout(io.ComfyNode):
                     display_name="IMAGE REFS",
                     tooltip="Ordered cast, wardrobe, and location images for Enhance Prompt.",
                 ),
+                MiniMaxH3Context.Output(
+                    display_name="CONTEXT DATA",
+                    tooltip="Typed full context with ordered images, prompt data, and project asset paths for Enhance Prompt.",
+                ),
             ],
         )
 
@@ -230,11 +225,32 @@ class MiniMaxH3LocationScout(io.ComfyNode):
             if saved_sets:
                 sets_data = saved_sets
         items = _normalise_sets(sets_data)
-        payload, entries = _reference_data(cast_wardrobe, items)
+        project_info = project_details(project)
+        if not project_info.get("path"):
+            try:
+                inherited = json.loads(cast_wardrobe) if isinstance(cast_wardrobe, str) else cast_wardrobe
+            except (TypeError, ValueError):
+                inherited = {}
+            if isinstance(inherited, dict):
+                project_info = project_details(inherited.get("project"))
+        payload, entries = _reference_data(cast_wardrobe, items, project_info)
+        if project_info.get("path"):
+            payload["project"] = project_info
+        packed_images = _pack_images(entries)
+        prompt_context = _context_for(payload, entries)
+        context_data = make_context(
+            prompt_context=prompt_context,
+            images=[entry.get("reference") for entry in entries
+                    if isinstance(entry.get("reference"), dict)],
+            project=project_info,
+            sources={"cast_wardrobe_sets": payload, "sets": {"items": items}},
+            image_tensor=packed_images,
+        )
         return io.NodeOutput(
             json.dumps(payload, separators=(",", ":")),
-            _context_for(payload, entries),
-            _pack_images(entries),
+            prompt_context,
+            packed_images,
+            context_data,
         )
 
 

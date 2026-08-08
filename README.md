@@ -93,9 +93,9 @@ Eight nodes, category **MiniMax H3**:
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
 | **MiniMax H3 Director Project Plus** | Select or create a named project, browse to an external project folder for loading/saving, and emit its shared project-data payload. Connect `PROJECT DATA` to the optional `project` inputs on Casting Director, Wardrobe Director, Location Scout, and Director. |
-| **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. Its `ANALYZE SETTINGS` output can connect to Wardrobe Director for item analysis. |
-| **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` and optionally `ANALYZE SETTINGS` from Casting Director, then connect its output to the Director's `cast` input. |
-| **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Saves set data under `Projects/<project>/sets/`. |
+| **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. Its `ANALYZE SETTINGS` output can connect to Wardrobe Director for item analysis, and `CONTEXT DATA` can feed Enhance Prompt directly. |
+| **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` and optionally `ANALYZE SETTINGS` from Casting Director, then connect its output to the Director's `cast` input or use its `CONTEXT DATA` output for Enhance Prompt. |
+| **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Its typed `CONTEXT DATA` output also carries project asset paths. Saves set data under `Projects/<project>/sets/`. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
 | **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
@@ -249,11 +249,20 @@ For a structured reference workflow, connect the nodes in this order:
 Director Project PROJECT DATA -> Casting Director.project / Wardrobe Director.project / Location Scout.project / Director.project
 Casting Director CAST + WARDROBE -> Wardrobe Director -> Location Scout -> Director.cast
 Casting Director ANALYZE SETTINGS -> Wardrobe Director / Location Scout
-Location Scout CONTEXT -> Enhance Prompt.context
-Location Scout IMAGE REFS -> Enhance Prompt.images
+Location Scout CONTEXT DATA -> Enhance Prompt.context_data
+Location Scout CONTEXT -> Enhance Prompt.context (legacy text fallback)
+Location Scout IMAGE REFS -> Enhance Prompt.images (legacy image fallback)
 Enhance Prompt prompt -> Director.global_prompt
 Enhance Prompt ref_images -> Director.ref_images
 ```
+
+`CONTEXT DATA` is the preferred Enhance Prompt connection. Casting Director, Wardrobe
+Director, and Location Scout emit the same typed payload shape, so the last node in the
+chain carries the cast and wardrobe descriptions, ordered images as one numbered list,
+location descriptions, and the selected project's asset roots. Location Scout also passes
+its prepacked image tensor, so project-backed references can reach the VLM without adding
+separate image sockets. The old `CONTEXT` and `IMAGE REFS` sockets remain available for
+existing workflows.
 
 The Director can still be used by itself. External cast, wardrobe, location, and Enhance
 connections are optional; unconnected Director character slots, timeline prompts, and
@@ -425,7 +434,7 @@ settings; later saves from the connected nodes update their source sections in t
 The **MiniMax H3 Location Scout Plus** has eighteen set slots with a three-row scrollable
 grid. Connect `CAST + WARDROBE` from Wardrobe Director and `ANALYZE SETTINGS` from Casting
 Director. Each uploaded image is shown with its ordered `<image N>` tag; the node emits the
-combined images and a text context for Enhance Prompt, plus a `CAST + WARDROBE + SETS` JSON
+combined images and typed context data for Enhance Prompt, plus a `CAST + WARDROBE + SETS` JSON
 socket for the Director. Save Sets writes `Projects/<project>/sets/sets.json` and copies
 referenced assets into `Projects/<project>/sets/resources/`.
 
@@ -463,7 +472,9 @@ of deleting the other sources.
 
 Project names are sanitized before becoming folders. Uploaded assets are copied from
 ComfyUI's input area into the relevant project resource folder when they are available;
-the workflow data still retains the original ComfyUI reference.
+the workflow data still retains the original ComfyUI reference. The typed Enhance Prompt
+context includes the project path, resource manifest, and wardrobe/set resource roots, so
+saved references can be resolved after the original input files are no longer present.
 
 ## Prompt format
 
@@ -583,9 +594,12 @@ the finished shot, thinning included.
 
 ## Writing the prompt for you
 
-**MiniMax H3 Enhance Prompt Plus** hands your reference images and a one-line idea to a local
-vision model and gets back prompt text shaped for H3. The same images come out of its
-`ref_images` output, so what the model described is exactly what H3 conditions on.
+**MiniMax H3 Enhance Prompt Plus** accepts a typed `context_data` connection and a one-line
+idea. The context contains the ordered cast, wardrobe, and location references, prompt
+descriptions, and project asset locations. Enhance resolves those assets and sends the
+same ordered images to the local vision model; the same batch comes out of `ref_images`,
+so what the model described is exactly what H3 conditions on. The older direct image
+sockets are retained as a fallback for existing graphs.
 
 Use **PROCESS PROMPT** after the cast, wardrobe, location, idea, and model settings are ready.
 This runs the VLM, spicy second pass, and sound-line completion immediately and stores the
@@ -605,12 +619,15 @@ LoadImage ─→ image1 ├→ Enhance Prompt ─┬→ prompt           → Dir
                                        └→ duration_seconds → Director.duration
 ```
 
-Sockets grow as you connect, up to nine, and close the gap again when you disconnect.
+Connect Location Scout's `CONTEXT DATA` to Enhance Prompt's `context_data` input for the
+full ordered cast, wardrobe, and location hand-off. The legacy direct image sockets grow
+as you connect, up to nine, and close the gap again when you disconnect.
 
 | Widget | What it does |
 |---|---|
 | `idea` | What you want, in plain words. |
-| `context` | Optional structured context from Location Scout, including cast, wardrobe, and ordered `<image N>` location references. |
+| `context_data` | Preferred typed context from Casting, Wardrobe, or Location Scout. Includes ordered images, descriptions, passthrough source data, and project asset roots. |
+| `context` | Legacy text context fallback from Location Scout, including cast, wardrobe, and ordered `<image N>` location references. |
 | `preset` | `global` writes scene, style, subjects and lighting and leaves the shots to your timeline. `storyboard` writes the whole shot sequence with timestamps — only for timelines whose segments carry no prompt text, or the two shot numberings collide. |
 | `system_prompt` | Overrides the built-in instructions, which follow MiniMax's own prompt-writing guide. |
 | `provider` / `base_url` / `model` / `api_key` | Ollama, LM Studio, or any OpenAI-compatible endpoint. `api_key` is optional and is sent as a Bearer token only when set. `http://` is added if you leave the base URL off; host and port only, no path. |

@@ -1,7 +1,5 @@
 """Wardrobe item editor and per-character collage builder for MiniMax H3 Director Plus."""
 
-import base64
-import io as _io
 import json
 import math
 import os
@@ -12,7 +10,7 @@ import folder_paths
 from PIL import Image, ImageDraw, ImageOps
 
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
-from . import minimax_media as media
+from .minimax_context import MiniMaxH3Context, load_reference_image, make_context, project_details
 from .minimax_projects import project_source_data
 
 MAX_WARDROBE_ITEMS = 18
@@ -87,17 +85,10 @@ def _normalise_items(value):
     return items
 
 
-def _load_item_image(image):
+def _load_item_image(image, context=None):
     """Read one uploaded item image without failing the entire wardrobe payload."""
     try:
-        if image.get("name"):
-            path = media.resolve_input_path(image["name"])
-            if path:
-                return Image.open(path).convert("RGB")
-        encoded = image.get("b64") or ""
-        if encoded:
-            encoded = encoded.split(",", 1)[1] if "," in encoded else encoded
-            return Image.open(_io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        return load_reference_image(image, context)
     except Exception:
         return None
     return None
@@ -130,7 +121,7 @@ def _write_wardrobe_collage(images):
     return {"name": "whatdreamscost/%s" % filename}
 
 
-def _build_wardrobe_collages(active_characters, items):
+def _build_wardrobe_collages(active_characters, items, context=None):
     collages = []
     for character_slot in range(1, len(active_characters) + 1):
         assigned_items = [
@@ -141,7 +132,7 @@ def _build_wardrobe_collages(active_characters, items):
         descriptions = []
         anatomy_descriptions = []
         for item in assigned_items:
-            image = _load_item_image(item["images"][0])
+            image = _load_item_image(item["images"][0], context)
             if image is not None:
                 source_images.append(image)
             if item.get("description"):
@@ -230,6 +221,10 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
                     display_name="CONTEXT",
                     tooltip="Cast, wardrobe descriptions, and ordered image context for Enhance Prompt.",
                 ),
+                MiniMaxH3Context.Output(
+                    display_name="CONTEXT DATA",
+                    tooltip="Typed cast and wardrobe context with ordered image references and project asset paths for Enhance Prompt.",
+                ),
             ],
         )
 
@@ -246,6 +241,14 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
             if saved_wardrobe:
                 wardrobe_data = saved_wardrobe
         cast = _normalise_cast(cast_wardrobe)
+        project = project_details(project)
+        if not project.get("path"):
+            try:
+                inherited = json.loads(cast_wardrobe) if isinstance(cast_wardrobe, str) else cast_wardrobe
+            except (TypeError, ValueError):
+                inherited = {}
+            if isinstance(inherited, dict):
+                project = project_details(inherited.get("project"))
         active_characters = [
             {**character, "hired": True}
             for character in cast["characters"]
@@ -260,15 +263,35 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
             }
             for item in items
         ]
-        wardrobe_collages = _build_wardrobe_collages(active_characters, items)
+        wardrobe_collages = _build_wardrobe_collages(active_characters, items, project)
         payload = {
             "version": 2,
             "characters": active_characters,
             "wardrobe_items": items,
             "wardrobe_collages": wardrobe_collages,
         }
+        if project.get("path"):
+            payload["project"] = project
         cast_wardrobe_json = json.dumps(payload, separators=(",", ":"))
-        return io.NodeOutput(cast_wardrobe_json, _wardrobe_context(payload))
+        image_refs = [
+            image
+            for character in payload.get("characters", [])
+            for image in (character.get("images") or [])
+            if isinstance(image, dict)
+        ]
+        image_refs.extend(
+            image
+            for collage in payload.get("wardrobe_collages", [])
+            for image in (collage.get("images") or [])[:1]
+            if isinstance(image, dict)
+        )
+        context_data = make_context(
+            prompt_context=_wardrobe_context(payload),
+            images=image_refs,
+            project=project,
+            sources={"cast_wardrobe": payload},
+        )
+        return io.NodeOutput(cast_wardrobe_json, _wardrobe_context(payload), context_data)
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3WardrobeDirectorPlusCS": MiniMaxH3WardrobeDirector}

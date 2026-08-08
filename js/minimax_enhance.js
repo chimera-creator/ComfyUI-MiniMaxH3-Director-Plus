@@ -234,6 +234,14 @@ app.registerExtension({
         try {
           const imageValues = [];
           const seenImageSources = new Set();
+          const contextDataSource = linkedNode(node, "context_data");
+          if (contextDataSource && !seenImageSources.has(contextDataSource.id)) {
+            seenImageSources.add(contextDataSource.id);
+            for (const value of sourceImageValues(contextDataSource)) {
+              const dataUrl = await asDataUrl(value);
+              if (dataUrl) imageValues.push(dataUrl);
+            }
+          }
           for (let index = 0; index < 9; index++) {
             const source = sourceForImageInput(node, index);
             if (!source || seenImageSources.has(source.id)) continue;
@@ -244,7 +252,7 @@ app.registerExtension({
             }
           }
           const contextInput = node.inputs?.find((input) => input.name === "context");
-          const contextSource = linkedNode(node, "context");
+          const contextSource = contextDataSource || linkedNode(node, "context");
           const sourceContext = contextFromSource(contextSource);
           const context = sourceContext.lines.join("\n") || String(contextInput?.value || widgetValue(node, "context", "") || "");
           const response = await api.fetchApi("/minimax_director/enhance/process", {

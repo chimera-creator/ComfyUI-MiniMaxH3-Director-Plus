@@ -4,6 +4,7 @@ import json
 
 from comfy_api.latest import io
 
+from .minimax_context import MiniMaxH3Context, make_context, project_details
 from .minimax_projects import project_source_data
 
 MAX_CHARACTERS = 9
@@ -167,6 +168,10 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
                     display_name="CONTEXT",
                     tooltip="Cast descriptions and ordered cast image context for Enhance Prompt.",
                 ),
+                MiniMaxH3Context.Output(
+                    display_name="CONTEXT DATA",
+                    tooltip="Typed cast context with ordered image references and project asset paths for Enhance Prompt.",
+                ),
             ],
         )
 
@@ -180,9 +185,14 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
             if saved_cast:
                 cast_data = saved_cast
         value = _normalise_cast(cast_data)
+        project_info = project_details(project)
         # Analyzer settings stay local to this node; the graph only needs the reusable
         # character payload and should not carry an API key into the Director socket.
         payload = _active_cast_payload(value)
+        if project_info.get("path"):
+            # Preserve the selected project through CAST -> Wardrobe -> Location even
+            # when those nodes are not separately connected to the Project node.
+            payload["project"] = project_info
         cast_json = json.dumps(payload, separators=(",", ":"))
         # The second socket deliberately starts with an empty item list. The Wardrobe
         # Director owns item state; this socket is the stable cast hand-off into it.
@@ -193,8 +203,20 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
             "model": value.get("analyzeModel", ""),
             "api_key": value.get("analyzeApiKey", ""),
         }, separators=(",", ":"))
+        image_refs = [
+            image
+            for character in payload.get("characters", [])
+            for image in (character.get("images") or [])
+            if isinstance(image, dict)
+        ]
+        context_data = make_context(
+            prompt_context=_cast_context(payload),
+            images=image_refs,
+            project=project_info,
+            sources={"cast": payload},
+        )
         return io.NodeOutput(cast_json, wardrobe_json, analyze_settings,
-                             _cast_context(payload))
+                             _cast_context(payload), context_data)
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3CastingDirectorPlusCS": MiniMaxH3CastingDirector}

@@ -26,6 +26,7 @@ from comfy_api.latest import io
 from server import PromptServer
 
 from . import minimax_media as media
+from .minimax_context import normalise_context, reference_tensors, MiniMaxH3Context
 from .minimax_core import extra
 
 log = logging.getLogger(__name__)
@@ -382,10 +383,11 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
             display_name="MiniMax H3 Enhance Prompt Plus",
             category="MiniMax H3",
             description=(
-                "Turns a one-line idea plus reference images into a MiniMax-H3 prompt, "
+                "Turns a one-line idea plus typed cast/wardrobe/location context into a MiniMax-H3 prompt, "
                 "using a local vision model (Ollama / LM Studio / OpenAI-compatible). "
-                "Wire `prompt` into the Director's global_prompt and `ref_images` into its "
-                "ref_images, so the model describes exactly the images H3 conditions on."
+                "Connect CONTEXT DATA when available; legacy direct image sockets remain "
+                "available. Wire `prompt` into the Director's global_prompt and `ref_images` "
+                "into its ref_images, so the model describes exactly the images H3 conditions on."
             ),
             inputs=[
                 io.Autogrow.Input(
@@ -404,6 +406,11 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                 io.String.Input("context", multiline=True, default="", optional=True,
                                 tooltip="Structured cast, wardrobe, and location context from "
                                         "a Scout or Director node."),
+                MiniMaxH3Context.Input(
+                    "context_data", force_input=True, optional=True,
+                    tooltip="Preferred typed context from Casting, Wardrobe, or Location Scout. "
+                            "Carries ordered images, prompt data, and project asset paths.",
+                ),
                 io.Combo.Input("preset", options=[PRESET_GLOBAL, PRESET_STORYBOARD],
                                default=PRESET_GLOBAL,
                                tooltip="'global' writes scene, style, subjects and lighting and "
@@ -489,8 +496,19 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                       duration_seconds=5.0, provider="ollama", base_url="", model="", api_key="",
                       use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
-                      on_error="passthrough", context="", processed_prompt="") -> io.NodeOutput:
-        tensors = _collect(images)
+                      on_error="passthrough", context="", processed_prompt="",
+                      context_data=None) -> io.NodeOutput:
+        typed_context = normalise_context(context_data)
+        context_has_images = isinstance(context_data, dict) and (
+            "image_tensor" in context_data or "images" in context_data
+        )
+        if typed_context.get("image_tensor") is not None:
+            tensors = [typed_context["image_tensor"]]
+        elif context_has_images:
+            tensors = reference_tensors(typed_context.get("images"), typed_context,
+                                        limit=MAX_IMAGES)
+        else:
+            tensors = _collect(images)
         if len(tensors) > MAX_IMAGES:
             log.warning("[MiniMaxEnhance] %d images connected, MiniMax H3 takes at most %d — "
                         "dropping the rest.", len(tensors), MAX_IMAGES)
@@ -527,9 +545,15 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         system = (system_prompt or "").strip() or system_for(preset, max_words)
 
         user = (idea or "").strip() or "Describe what these images show as a video."
-        context = (context or "").strip()
-        if context:
-            user = context + "\n\n" + user
+        context_parts = []
+        typed_context_text = typed_context.get("prompt_context", "")
+        if typed_context_text:
+            context_parts.append(typed_context_text)
+        legacy_context = (context or "").strip()
+        if legacy_context and legacy_context not in context_parts:
+            context_parts.append(legacy_context)
+        if context_parts:
+            user = "\n\n".join(context_parts) + "\n\n" + user
         if preset == PRESET_STORYBOARD:
             user = "%s\n\nTarget duration: %.1f seconds." % (user, float(duration_seconds))
         # Recency matters more than instruction count for small models: without this
