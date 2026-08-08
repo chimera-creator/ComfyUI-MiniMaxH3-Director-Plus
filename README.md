@@ -406,7 +406,8 @@ Use each slot's **HIRE** toggle to choose
 which characters pass through. Hired characters are compacted in order, so Casting slot 2
 becomes Director slot 1 when slot 1 is not hired. Use **REMOVE** to clear a cast member.
 An external cast replaces only the Director's character slots; the Director's timeline,
-prompt overrides and sound fields remain independent.
+prompt overrides and sound fields remain independent. The node saves automatically while
+editing and also has a **SAVE TO PROJECT** button for an immediate Cast snapshot.
 
 Both the built-in Director editor and Casting Director support up to nine character slots.
 The character grids reflow with node width instead of relying on fixed positions. The
@@ -432,7 +433,8 @@ description analysis.
 
 Wardrobe items also have a category dropdown: **Full Outfits**, **Tops**, **Bottoms**,
 **Accessories**, or **Anatomy**. Use Anatomy for close-up references of distinctive body
-parts. Wardrobe data is stored in the connected project automatically. Project data is merged
+parts. Wardrobe data is stored in the connected project automatically, and **SAVE TO PROJECT**
+creates an immediate Wardrobe snapshot. Project data is merged
 into the project root `project.json`; item metadata and images are split into their category
 folders. A Director save includes the compiled
 prompt, timeline, render metadata, cast/wardrobe connections, and connected enhanced-prompt
@@ -449,7 +451,8 @@ Location images are ordered after the cast and wardrobe images. The visible `<im
 label is the order supplied to Enhance Prompt, while the Director converts the same
 ordered references to concrete `<Picture N>` tokens in `location_definitions`. This keeps
 the generated location description attached to the correct reference even when characters
-or wardrobe collages are added first.
+or wardrobe collages are added first. Location Scout also provides **SAVE TO PROJECT** for
+an immediate Sets snapshot; its automatic saves remain enabled while editing.
 
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the

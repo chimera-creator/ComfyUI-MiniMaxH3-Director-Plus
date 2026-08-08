@@ -233,6 +233,7 @@ app.registerExtension({
       let projectSelect = null;
       let projectNameInput = null;
       let projectStatus = null;
+      let saveProjectButton = null;
 
       const setProjectStatus = (message, isError = false) => {
         if (!projectStatus) return;
@@ -424,6 +425,35 @@ app.registerExtension({
             });
           } catch (error) { console.warn("[MiniMaxWardrobeDirector] project save failed", error); }
         }, 500);
+      };
+
+      const saveToProjectNow = async () => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
+        const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
+        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
+        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        if (!project || (!path && !projectsPath)) {
+          setProjectStatus("Connect and configure a Director Project node first.", true);
+          return;
+        }
+        if (saveProjectButton) saveProjectButton.disabled = true;
+        try {
+          const serialized = JSON.stringify(wardrobe);
+          const response = await api.fetchApi("/minimax_director/projects/save", {
+            method: "POST",
+            body: JSON.stringify({ project, source: "wardrobe", folder: "Wardrobe", path,
+              projects_path: projectsPath, data: { wardrobe_data: serialized, items: wardrobe.items } }),
+          });
+          const result = await response.json();
+          if (!response.ok || result.status !== "success") throw new Error(result.message || "Could not save project");
+          setProjectStatus(`Saved ${result.project?.project_name || project}/Wardrobe.`);
+        } catch (error) {
+          setProjectStatus(error.message || String(error), true);
+        } finally {
+          if (saveProjectButton) saveProjectButton.disabled = false;
+        }
       };
 
       const save = () => {
@@ -696,7 +726,12 @@ app.registerExtension({
       const help = document.createElement("span");
       help.className = "mmxd-wardrobe-help";
       help.textContent = "Assign clothing/accessories · connect ANALYZE SETTINGS for item analysis";
-      head.appendChild(title); head.appendChild(help);
+      saveProjectButton = document.createElement("button");
+      saveProjectButton.className = "mmxd-wardrobe-project-button";
+      saveProjectButton.textContent = "SAVE TO PROJECT";
+      saveProjectButton.title = "Save the current wardrobe to the connected Director Project.";
+      saveProjectButton.addEventListener("click", (event) => { event.stopPropagation(); void saveToProjectNow(); });
+      head.appendChild(title); head.appendChild(help); head.appendChild(saveProjectButton);
       projectStatus = document.createElement("span");
       projectStatus.className = "mmxd-wardrobe-status";
       projectStatus.style.margin = "0 0 5px";

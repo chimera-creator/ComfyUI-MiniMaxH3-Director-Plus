@@ -409,7 +409,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                 tooltip="Structured cast, wardrobe, and location context from "
                                         "a Scout or Director node."),
                 MiniMaxH3Context.Input(
-                    "context_data", force_input=True, optional=True,
+                    "context_data", optional=True,
                     tooltip="Preferred typed context from Casting, Wardrobe, or Location Scout. "
                             "Carries ordered images, prompt data, and project asset paths.",
                 ),

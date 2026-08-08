@@ -205,6 +205,8 @@ app.registerExtension({
       let projectSelect = null;
       let projectNameInput = null;
       let status = null;
+      let projectStatus = null;
+      let saveProjectButton = null;
       let itemsContainer = null;
 
       const setStatus = (message, error = false) => {
@@ -305,6 +307,35 @@ app.registerExtension({
         }, 500);
       };
 
+      const saveToProjectNow = async () => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
+        const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
+        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
+        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        if (!project || (!path && !projectsPath)) {
+          if (projectStatus) { projectStatus.textContent = "Connect and configure a Director Project node first."; projectStatus.style.color = "#d86f6f"; }
+          return;
+        }
+        if (saveProjectButton) saveProjectButton.disabled = true;
+        try {
+          const serialized = JSON.stringify(sets);
+          const response = await api.fetchApi("/minimax_director/projects/save", {
+            method: "POST",
+            body: JSON.stringify({ project, source: "sets", folder: "Sets", path,
+              projects_path: projectsPath, data: { sets_data: serialized, items: sets.items } }),
+          });
+          const result = await response.json();
+          if (!response.ok || result.status !== "success") throw new Error(result.message || "Could not save project");
+          if (projectStatus) { projectStatus.textContent = `Saved ${result.project?.project_name || project}/Sets.`; projectStatus.style.color = "#666"; }
+        } catch (error) {
+          if (projectStatus) { projectStatus.textContent = error.message || String(error); projectStatus.style.color = "#d86f6f"; }
+        } finally {
+          if (saveProjectButton) saveProjectButton.disabled = false;
+        }
+      };
+
       const save = () => {
         const serialized = JSON.stringify(sets);
         if (setsWidget) { setsWidget.value = serialized; if (setsWidget.element) setsWidget.element.value = serialized; }
@@ -374,6 +405,16 @@ app.registerExtension({
         }
       };
 
+      const controls = document.createElement("div"); controls.className = "mmxd-location-head";
+      const title = document.createElement("span"); title.className = "mmxd-location-title"; title.textContent = "LOCATION SCOUT";
+      const help = document.createElement("span"); help.className = "mmxd-location-help"; help.textContent = "Collect set references and descriptions for the prompt.";
+      saveProjectButton = document.createElement("button"); saveProjectButton.className = "mmxd-location-project-button";
+      saveProjectButton.textContent = "SAVE TO PROJECT"; saveProjectButton.title = "Save the current sets to the connected Director Project.";
+      saveProjectButton.addEventListener("click", (event) => { event.stopPropagation(); void saveToProjectNow(); });
+      controls.appendChild(title); controls.appendChild(help); controls.appendChild(saveProjectButton);
+      projectStatus = document.createElement("div"); projectStatus.className = "mmxd-location-status";
+      projectStatus.textContent = "Project data saves automatically; use SAVE TO PROJECT for an immediate snapshot.";
+      container.appendChild(controls); container.appendChild(projectStatus);
       status = document.createElement("div"); status.className = "mmxd-location-status"; container.appendChild(status);
       status.textContent = "Project is inherited from the connected Director Project node.";
       itemsContainer = document.createElement("div"); itemsContainer.className = "mmxd-location-items"; container.appendChild(itemsContainer);

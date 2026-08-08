@@ -94,6 +94,7 @@ const CASTING_STYLES = `
   .mmxd-casting-help { color:#666; font-size:9px; flex:1; }
   .mmxd-casting-settings-btn { background:#252525; color:#aaa; border:1px solid #444; border-radius:4px; padding:3px 7px; font-size:10px; cursor:pointer; }
   .mmxd-casting-settings-btn:hover { color:#fff; border-color:#777; }
+  .mmxd-casting-project-status { color:#666; font-size:9px; margin-left:6px; }
   .mmxd-casting-settings { display:none; background:#191919; border:1px solid #333; border-radius:5px; padding:6px; margin:0 0 7px; }
   .mmxd-casting-settings.open { display:block; }
   .mmxd-casting-setting-row { display:flex; align-items:center; gap:6px; min-height:25px; }
@@ -179,6 +180,8 @@ app.registerExtension({
       };
 
       let cast = parseCast(castWidget?.value || "");
+      let projectStatus = null;
+      let saveProjectButton = null;
       let projectSaveTimer = null;
       const queueProjectSave = (serialized) => {
         const input = node.inputs?.find((item) => item.name === "project");
@@ -198,6 +201,40 @@ app.registerExtension({
             });
           } catch (error) { console.warn("[MiniMaxCastingDirector] project save failed", error); }
         }, 500);
+      };
+
+      const setProjectStatus = (message, error = false) => {
+        if (!projectStatus) return;
+        projectStatus.textContent = message || "";
+        projectStatus.style.color = error ? "#d86f6f" : "#666";
+      };
+
+      const saveToProjectNow = async () => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
+        const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
+        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
+        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        if (!project || (!path && !projectsPath)) {
+          setProjectStatus("Connect and configure a Director Project node first.", true);
+          return;
+        }
+        if (saveProjectButton) saveProjectButton.disabled = true;
+        try {
+          const response = await api.fetchApi("/minimax_director/projects/save", {
+            method: "POST",
+            body: JSON.stringify({ project, source: "casting", folder: "Cast", path,
+              projects_path: projectsPath, data: { cast_data: JSON.stringify(cast), characters: cast.characters } }),
+          });
+          const result = await response.json();
+          if (!response.ok || result.status !== "success") throw new Error(result.message || "Could not save project");
+          setProjectStatus(`Saved ${result.project?.project_name || project}/Cast.`);
+        } catch (error) {
+          setProjectStatus(error.message || String(error), true);
+        } finally {
+          if (saveProjectButton) saveProjectButton.disabled = false;
+        }
       };
 
       const save = () => {
@@ -551,12 +588,21 @@ app.registerExtension({
         if (required > (node.size?.[1] || 0)) node.setSize?.([node.size[0], required]);
         node.setDirtyCanvas?.(true, true);
       });
-      head.appendChild(title); head.appendChild(help); head.appendChild(settingsButton);
+      saveProjectButton = document.createElement("button");
+      saveProjectButton.className = "mmxd-casting-settings-btn";
+      saveProjectButton.textContent = "SAVE TO PROJECT";
+      saveProjectButton.title = "Save the current cast to the connected Director Project.";
+      saveProjectButton.addEventListener("click", (event) => { event.stopPropagation(); void saveToProjectNow(); });
+      head.appendChild(title); head.appendChild(help); head.appendChild(settingsButton); head.appendChild(saveProjectButton);
       const slots = document.createElement("div");
       slots.className = "mmxd-casting-slots";
       const footer = document.createElement("div");
       footer.className = "mmxd-casting-footer";
       footer.textContent = "Hire selected characters to pass them through. Appearance excludes clothing; Wardrobe covers clothing and accessories. Up to 9 characters and 9 reference images total.";
+      projectStatus = document.createElement("span");
+      projectStatus.className = "mmxd-casting-project-status";
+      projectStatus.textContent = "Project data saves automatically; use SAVE TO PROJECT for an immediate snapshot.";
+      footer.appendChild(projectStatus);
       container.appendChild(head); container.appendChild(settings); container.appendChild(slots); container.appendChild(footer);
 
       const refresh = () => {
