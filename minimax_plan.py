@@ -196,7 +196,7 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
     """
     lines = []
     subject_of_slot = {}
-    for slot_index, _slot in enumerate(char_slots):
+    for slot_index, slot in enumerate(char_slots):
         ordinals = [i + 1 for i, s in enumerate(ref_image_slots)
                     if s.get("source") == "char" and s.get("slot") == slot_index]
         if not ordinals:
@@ -204,7 +204,12 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
         subject = len(subject_of_slot) + 1
         subject_of_slot[slot_index + 1] = subject
         pictures = " and ".join("<Picture %d>" % o for o in ordinals)
-        lines.append("<Subject %d> is the character shown in %s." % (subject, pictures))
+        line = "<Subject %d> is the character shown in %s." % (subject, pictures)
+        description = str(slot.get("description") or "").strip()
+        if description:
+            punctuation = "" if description.endswith((".", "!", "?")) else "."
+            line += " Character description: %s%s" % (description, punctuation)
+        lines.append(line)
 
     for i, _seg in enumerate(ref_video_segs):
         lines.append("<Video %d> is a reference video: follow its motion and camera work."
