@@ -204,11 +204,16 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
         subject = len(subject_of_slot) + 1
         subject_of_slot[slot_index + 1] = subject
         pictures = " and ".join("<Picture %d>" % o for o in ordinals)
-        line = "<Subject %d> is the character shown in %s." % (subject, pictures)
         description = str(slot.get("description") or "").strip()
         if description:
+            # Continue the sentence directly after the picture token, matching the
+            # prompt guide's compact subject-definition style.
+            description = description[:1].lower() + description[1:]
             punctuation = "" if description.endswith((".", "!", "?")) else "."
-            line += " Character description: %s%s" % (description, punctuation)
+            line = "<Subject %d> is the character shown in %s %s%s" % (
+                subject, pictures, description, punctuation)
+        else:
+            line = "<Subject %d> is the character shown in %s." % (subject, pictures)
         lines.append(line)
 
     for i, _seg in enumerate(ref_video_segs):

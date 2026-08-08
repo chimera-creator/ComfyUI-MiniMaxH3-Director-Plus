@@ -185,9 +185,10 @@ check("a character takes <Picture 1> ahead of the timeline",
 check_in("timeline images number after the character",
          "[Shot 1] begins from <Picture 2>", withchar["prompt"])
 check_in("the character becomes a named subject",
-         "<Subject 1> is the character shown in <Picture 1>.", withchar["prompt"])
+         "<Subject 1> is the character shown in <Picture 1> a woman in a red coat.",
+         withchar["prompt"])
 check_in("the automatic subject definition includes the character description",
-         "Character description: a woman in a red coat.", withchar["prompt"])
+         "<Picture 1> a woman in a red coat.", withchar["prompt"])
 check("ref_images input slots sit between character and timeline",
       [s["source"] for s in compile(tl([img(0, 144)], ref_mode="ON", characters=chars),
                                     extra_ref_image_count=2)["ref_image_slots"]],
