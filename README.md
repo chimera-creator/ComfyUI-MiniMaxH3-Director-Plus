@@ -261,9 +261,11 @@ it expands to `<Subject 1>` (MiniMax notation) or `<Picture 1>` (ComfyUI notatio
 image is attached as a reference. This is the **Refs ON (ref2va)** path.
 
 **Analyze** is optional and off the critical path. It sends the slot image to a local
-vision model and pastes back a one-line description, so `@char1` still means something in
-**Refs OFF** mode, where H3 gets no image at all. Nothing is installed for you and nothing
-is sent anywhere unless you press the button.
+vision model and asks for JSON containing separate `appearance` and `wardrobe` fields.
+Appearance covers physical traits without clothing; Wardrobe covers clothing and
+accessories. The two fields are merged into the Director's one-line character description,
+so `@char1` still means something in **Refs OFF** mode, where H3 gets no image at all.
+Nothing is installed for you and nothing is sent anywhere unless you press the button.
 
 To use it, run a vision model locally and point the gear menu's provider row at it:
 
@@ -278,7 +280,7 @@ sit in VRAM while H3 samples.
 
 If you want the same cast shared by several Director nodes, use **MiniMax H3 Casting
 Director Plus**. It has the same nine `@char1` … `@char9` slots, up to nine character
-images total, image upload, manual description and Analyze controls. Connect its `CAST`
+images total, image upload, Appearance and Wardrobe inputs, and Analyze controls. Connect its `CAST`
 output to each Director's `cast` input, then use each slot's **HIRE** toggle to choose
 which characters pass through. Hired characters are compacted in order, so Casting slot 2
 becomes Director slot 1 when slot 1 is not hired. Use **REMOVE** to clear a cast member.

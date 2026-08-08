@@ -356,11 +356,65 @@ _PROVIDER_DEFAULTS = {
     "custom": {"url": "", "model": ""},
 }
 
-_ANALYZE_PROMPT = (
-    "Describe the character's physical appearance in two concise sentences. "
-    "Specify their hair color/style, face details, and their clothing type/color. "
-    "Keep the entire response very brief."
+_ANALYZE_SYSTEM_PROMPT = (
+    "You analyze character reference images for a video prompt. "
+    "Return only one valid JSON object, with no markdown, code fences, or commentary. "
+    "The object must contain exactly these string keys: appearance and wardrobe. "
+    "Appearance describes only the person's identity and physical traits: face, hair, "
+    "eyes, facial hair, skin, body, and build. Never describe clothing or accessories "
+    "in appearance. Wardrobe describes only clothing and accessories: hats, glasses, "
+    "jewelry, shoes, bags, and garments. Never describe face, hair, body, or skin in "
+    "wardrobe. Use an empty string when a category is not visible. Write complete, "
+    "concise sentences with normal punctuation."
 )
+
+_ANALYZE_PROMPT = (
+    "Analyze the character in the supplied reference image(s). Split the description "
+    "between the JSON fields exactly as instructed. For example, hair under a cap means "
+    "the hair belongs in appearance and the cap belongs in wardrobe."
+)
+
+
+def _merge_character_description(appearance, wardrobe):
+    """Join the structured cast fields into the legacy Director description."""
+    appearance = str(appearance or "").strip()
+    wardrobe = str(wardrobe or "").strip()
+    parts = [part for part in (appearance, wardrobe) if part]
+    return " ".join(parts)
+
+
+def _parse_character_analysis(text):
+    """Parse a model's JSON response, tolerating an accidental code fence/preamble."""
+    text = strip_thinking(text).strip()
+    candidates = [text]
+    if "```" in text:
+        fenced = text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
+        candidates.append(fenced)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+
+    parsed = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            break
+        parsed = None
+    if parsed is None:
+        raise VLMError("Analyze returned invalid JSON. Ask the vision model to return only "
+                        "an object with appearance and wardrobe fields.")
+
+    appearance = str(parsed.get("appearance") or "").strip()
+    wardrobe = str(parsed.get("wardrobe") or "").strip()
+    return {
+        "appearance": appearance,
+        "wardrobe": wardrobe,
+        "description": _merge_character_description(appearance, wardrobe),
+    }
 
 
 def normalize_base_url(url, fallback=""):
@@ -530,8 +584,13 @@ async def analyze_character_endpoint(request):
         except VLMError as e:
             return web.json_response({"status": "error", "message": str(e)})
 
-        log.info("[MiniMaxDirector] Analysis complete: %s", generated_text)
-        return web.json_response({"status": "success", "description": generated_text})
+        try:
+            analysis = _parse_character_analysis(generated_text)
+        except VLMError as e:
+            return web.json_response({"status": "error", "message": str(e)})
+
+        log.info("[MiniMaxDirector] Analysis complete: %s", analysis)
+        return web.json_response({"status": "success", **analysis})
     except Exception as e:
         log.error("[MiniMaxDirector] Failed to analyze character: %s", e)
         return web.json_response({"status": "error", "message": str(e)}, status=500)

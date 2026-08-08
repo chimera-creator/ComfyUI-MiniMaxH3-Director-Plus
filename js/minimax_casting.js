@@ -13,9 +13,18 @@ const CASTING_DEFAULTS = {
 const MAX_CAST_IMAGES = 9;
 const MAX_CHARACTERS = 9;
 
-const emptyCharacter = () => ({ images: [], description: "", hired: false });
+const emptyCharacter = () => ({
+  images: [], appearance: "", wardrobe: "", description: "", hired: false,
+});
 
 const isHired = (character) => character?.hired === undefined || character.hired !== false;
+
+const mergeCharacterDescription = (character) => {
+  const appearance = String(character?.appearance || "").trim();
+  const wardrobe = String(character?.wardrobe || "").trim();
+  if (appearance || wardrobe) return [appearance, wardrobe].filter(Boolean).join(" ");
+  return String(character?.description || "").trim();
+};
 
 function emptyCast() {
   return {
@@ -32,12 +41,24 @@ function parseCast(value) {
   if (!parsed || typeof parsed !== "object") return cast;
 
   if (Array.isArray(parsed.characters)) {
-    cast.characters = parsed.characters.slice(0, MAX_CHARACTERS).map((item) => ({
-      images: Array.isArray(item?.images) ? item.images : [],
-      description: String(item?.description || ""),
-      // Casts saved before the hire toggle existed remain active.
-      hired: isHired(item),
-    }));
+    cast.characters = parsed.characters.slice(0, MAX_CHARACTERS).map((item) => {
+      const legacyDescription = String(item?.description || "").trim();
+      const appearance = String(item?.appearance || "").trim();
+      const wardrobe = String(item?.wardrobe || "").trim();
+      // Show an old one-piece description in the new Appearance field until the user
+      // edits or re-runs analysis, while preserving its Director-facing meaning.
+      const hasSplit = !!(appearance || wardrobe);
+      const character = {
+        images: Array.isArray(item?.images) ? item.images : [],
+        appearance: hasSplit ? appearance : legacyDescription,
+        wardrobe: hasSplit ? wardrobe : "",
+        description: legacyDescription,
+        // Casts saved before the hire toggle existed remain active.
+        hired: isHired(item),
+      };
+      character.description = mergeCharacterDescription(character);
+      return character;
+    });
     while (cast.characters.length < MAX_CHARACTERS) cast.characters.push(emptyCharacter());
   }
   for (const key of ["analyzeProvider", "analyzeBaseUrl", "analyzeModel", "analyzeApiKey"]) {
@@ -63,7 +84,7 @@ const CASTING_STYLES = `
   .mmxd-casting-setting-input, .mmxd-casting-setting-select { flex:1; min-width:0; height:22px; box-sizing:border-box; background:#242424; color:#ddd; border:1px solid #444; border-radius:3px; padding:2px 5px; font-size:10px; }
   .mmxd-casting-setting-note { color:#666; font-size:9px; line-height:1.3; padding:4px 0 0 114px; }
   .mmxd-casting-slots { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; width:100%; box-sizing:border-box; }
-  .mmxd-casting-slot { min-width:0; height:150px; box-sizing:border-box; background:#1e1e1e; border:1.5px dashed #444; border-radius:7px; padding:4px; position:relative; cursor:pointer; overflow:hidden; }
+  .mmxd-casting-slot { min-width:0; height:180px; box-sizing:border-box; background:#1e1e1e; border:1.5px dashed #444; border-radius:7px; padding:4px; position:relative; cursor:pointer; overflow:hidden; }
   .mmxd-casting-hire-toggle { position:absolute; top:4px; right:4px; z-index:8; background:#252525; color:#888; border:1px solid #444; border-radius:3px; padding:2px 6px; font-size:9px; font-weight:700; cursor:pointer; }
   .mmxd-casting-hire-toggle:hover { color:#fff; border-color:#777; }
   .mmxd-casting-hire-toggle.hired { background:#1a3a2a; color:#4fff8f; border-color:#4fff8f; }
@@ -81,7 +102,9 @@ const CASTING_STYLES = `
   .mmxd-casting-analyze { position:absolute; bottom:-8px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.88); color:#ddd; border:1px solid #444; border-radius:3px; padding:2px 7px; font-size:9px; font-weight:700; cursor:pointer; z-index:5; white-space:nowrap; }
   .mmxd-casting-analyze:hover { background:#4fff8f; color:#000; border-color:#4fff8f; }
   .mmxd-casting-analyze.loading { background:#333; color:#888; cursor:wait; pointer-events:none; }
-  .mmxd-casting-description { width:100%; height:38px; box-sizing:border-box; margin-top:10px; padding:2px 4px; resize:none; outline:none; background:#111; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-family:inherit; font-size:9px; }
+  .mmxd-casting-field { width:100%; margin-top:5px; }
+  .mmxd-casting-field-label { display:block; color:#777; font-size:8px; line-height:10px; text-transform:uppercase; letter-spacing:.35px; }
+  .mmxd-casting-description { width:100%; height:28px; box-sizing:border-box; padding:2px 4px; resize:none; outline:none; background:#111; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-family:inherit; font-size:9px; }
   .mmxd-casting-description:focus { border-color:#4fff8f; }
   .mmxd-casting-footer { color:#666; font-size:9px; margin-top:5px; }
 `;
@@ -132,7 +155,7 @@ app.registerExtension({
       });
       uiWidget.serialize = false;
       uiWidget.computeSize = function (width) {
-        return [Math.max(10, width || node.size?.[0] || 760), settingsOpen ? 648 : 528];
+        return [Math.max(10, width || node.size?.[0] || 760), settingsOpen ? 738 : 618];
       };
 
       let cast = parseCast(castWidget?.value || "");
@@ -263,7 +286,9 @@ app.registerExtension({
           });
           const result = await response.json();
           if (result.status !== "success") throw new Error(result.message || "Analysis failed");
-          cast.characters[index].description = result.description || "";
+          cast.characters[index].appearance = result.appearance || result.description || "";
+          cast.characters[index].wardrobe = result.wardrobe || "";
+          cast.characters[index].description = mergeCharacterDescription(cast.characters[index]);
           save();
           renderSlots();
         } catch (error) {
@@ -363,7 +388,8 @@ app.registerExtension({
           });
           slot.appendChild(hireToggle);
 
-          const hasMember = character.images.length > 0 || !!String(character.description || "").trim();
+          const hasMember = character.images.length > 0 || !!String(character.appearance || "").trim() ||
+            !!String(character.wardrobe || "").trim() || !!String(character.description || "").trim();
           if (hasMember) {
             const removeMember = document.createElement("button");
             removeMember.className = "mmxd-casting-remove";
@@ -397,19 +423,34 @@ app.registerExtension({
             if ((cast.analyzeProvider || "ollama") !== "off") {
               const analyze = document.createElement("button");
               analyze.className = "mmxd-casting-analyze";
-              analyze.textContent = character.description ? "Re-Analyze" : "Analyze";
+              analyze.textContent = mergeCharacterDescription(character) ? "Re-Analyze" : "Analyze";
               analyze.title = "Analyze this character reference";
               analyze.addEventListener("click", (event) => { event.stopPropagation(); runAnalysis(index, analyze); });
               previews.appendChild(analyze);
             }
             slot.appendChild(previews);
-            const description = document.createElement("textarea");
-            description.className = "mmxd-casting-description";
-            description.value = character.description || "";
-            description.placeholder = "manual description...";
-            description.addEventListener("click", (event) => event.stopPropagation());
-            description.addEventListener("input", () => { character.description = description.value; save(); });
-            slot.appendChild(description);
+            const addDescriptionField = (labelText, key, placeholder) => {
+              const field = document.createElement("div");
+              field.className = "mmxd-casting-field";
+              const label = document.createElement("label");
+              label.className = "mmxd-casting-field-label";
+              label.textContent = labelText;
+              const input = document.createElement("textarea");
+              input.className = "mmxd-casting-description";
+              input.value = character[key] || "";
+              input.placeholder = placeholder;
+              input.addEventListener("click", (event) => event.stopPropagation());
+              input.addEventListener("input", () => {
+                character[key] = input.value;
+                character.description = mergeCharacterDescription(character);
+                save();
+              });
+              field.appendChild(label);
+              field.appendChild(input);
+              slot.appendChild(field);
+            };
+            addDescriptionField("Appearance", "appearance", "face, hair, eyes, build — no clothing...");
+            addDescriptionField("Wardrobe", "wardrobe", "clothing and accessories...");
           } else {
             const label = document.createElement("div");
             label.className = "mmxd-casting-label"; label.textContent = `@char${index + 1}`;
@@ -441,13 +482,15 @@ app.registerExtension({
       slots.className = "mmxd-casting-slots";
       const footer = document.createElement("div");
       footer.className = "mmxd-casting-footer";
-      footer.textContent = "Hire selected characters to pass them through. Up to 9 characters and 9 reference images total; use @char1–@char9 in Director prompts.";
+      footer.textContent = "Hire selected characters to pass them through. Appearance excludes clothing; Wardrobe covers clothing and accessories. Up to 9 characters and 9 reference images total.";
       container.appendChild(head); container.appendChild(settings); container.appendChild(slots); container.appendChild(footer);
 
       const refresh = () => {
         cast = parseCast(castWidget?.value || node._castingData || "");
         refreshSettings();
         renderSlots();
+        const required = node.computeSize?.()?.[1] || 0;
+        if (required > (node.size?.[1] || 0)) node.setSize?.([node.size[0], required]);
       };
       node._castingRefresh = refresh;
       refresh();

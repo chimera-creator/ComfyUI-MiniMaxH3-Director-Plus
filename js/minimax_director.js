@@ -43,6 +43,13 @@ const CHARACTER_SLOT_HEIGHT = 120;
 const CHARACTER_GRID_GAP = 12;
 const CHARACTER_SLOT_MIN_WIDTH = 160;
 
+const mergeDirectorCastDescription = (character) => {
+  const appearance = String(character?.appearance || "").trim();
+  const wardrobe = String(character?.wardrobe || "").trim();
+  if (appearance || wardrobe) return [appearance, wardrobe].filter(Boolean).join(" ");
+  return String(character?.description || "").trim();
+};
+
 const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
 
 function hideWidget(w) {
@@ -9215,7 +9222,12 @@ class TimelineEditor {
       if (!parsed || !Array.isArray(parsed.characters)) return null;
       return {
         ...parsed,
-        characters: parsed.characters.filter((character) => character?.hired !== false),
+        characters: parsed.characters
+          .filter((character) => character?.hired !== false)
+          .map((character) => ({
+            ...character,
+            description: mergeDirectorCastDescription(character),
+          })),
       };
     } catch (_) {
       return null;

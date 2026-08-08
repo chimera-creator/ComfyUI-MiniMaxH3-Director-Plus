@@ -126,9 +126,15 @@ def parse_cast(cast_data):
                        "name": item.get("fileName", "")}]
         clean_images = [img for img in images
                         if isinstance(img, dict) and (img.get("name") or img.get("b64"))]
-        description = str(item.get("description") or "")
+        appearance = str(item.get("appearance") or "").strip()
+        wardrobe = str(item.get("wardrobe") or "").strip()
+        description = (" ".join(part for part in (appearance, wardrobe) if part)
+                       if appearance or wardrobe
+                       else str(item.get("description") or "").strip())
         characters.append({
             "images": clean_images,
+            "appearance": appearance,
+            "wardrobe": wardrobe,
             "description": description,
             "hired": True,
         })
@@ -437,8 +443,13 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         legacy_b64 = char_info.get("imageB64", "")
         if legacy_b64 and not images_list:
             images_list = [{"b64": legacy_b64, "name": char_info.get("fileName", "")}]
-        char_slots.append({"images": images_list,
-                           "description": char_info.get("description", "") or ""})
+        appearance = str(char_info.get("appearance") or "").strip()
+        wardrobe = str(char_info.get("wardrobe") or "").strip()
+        description = (" ".join(part for part in (appearance, wardrobe) if part)
+                       if appearance or wardrobe
+                       else char_info.get("description", "") or "")
+        char_slots.append({"images": images_list, "appearance": appearance,
+                           "wardrobe": wardrobe, "description": description})
 
     # --- shots + image events ---
     shots, events = [], []

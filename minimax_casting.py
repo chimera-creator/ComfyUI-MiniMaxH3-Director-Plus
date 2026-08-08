@@ -8,7 +8,15 @@ MAX_CHARACTERS = 9
 
 
 def _empty_character():
-    return {"images": [], "description": "", "hired": False}
+    return {"images": [], "appearance": "", "wardrobe": "", "description": "", "hired": False}
+
+
+def _merge_character_description(item):
+    appearance = str(item.get("appearance") or "").strip()
+    wardrobe = str(item.get("wardrobe") or "").strip()
+    if appearance or wardrobe:
+        return " ".join(part for part in (appearance, wardrobe) if part)
+    return str(item.get("description") or "").strip()
 
 
 def _is_hired(value, default=True):
@@ -47,7 +55,9 @@ def _normalise_cast(cast_data):
             images = item.get("images") if isinstance(item.get("images"), list) else []
             result["characters"].append({
                 "images": images,
-                "description": str(item.get("description") or ""),
+                "appearance": str(item.get("appearance") or ""),
+                "wardrobe": str(item.get("wardrobe") or ""),
+                "description": _merge_character_description(item),
                 # Casts saved before the hire toggle existed remain active.
                 "hired": _is_hired(item.get("hired")),
             })
@@ -96,6 +106,9 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
         payload = {"version": value["version"], "characters": [
             {
                 **character,
+                # Keep the old Director-facing field populated for workflows and
+                # integrations that only know about `description`.
+                "description": _merge_character_description(character),
                 "hired": True,
             }
             for character in value["characters"]

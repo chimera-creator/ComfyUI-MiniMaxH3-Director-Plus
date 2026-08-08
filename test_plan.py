@@ -189,6 +189,20 @@ check_in("the character becomes a named subject",
          withchar["prompt"])
 check_in("the automatic subject definition includes the character description",
          "<Picture 1> a woman in a red coat.", withchar["prompt"])
+split_character = {
+    "images": [{"name": "split.png"}],
+    "appearance": "He has short dark hair, brown eyes, and a full dark beard graying at the chin.",
+    "wardrobe": "He is wearing a backward yellow cap. He is shirtless and wears loose black athletic shorts.",
+}
+split_cast = plan.merge_cast({}, json.dumps({"characters": [split_character]}))
+check("appearance and wardrobe become the Director description",
+      split_cast["characters"][0]["description"],
+      "He has short dark hair, brown eyes, and a full dark beard graying at the chin. "
+      "He is wearing a backward yellow cap. He is shirtless and wears loose black athletic shorts.")
+split_prompt = compile(tl([img(0, 144)], ref_mode="ON", characters=[split_character]))["prompt"]
+check_in("split character fields are merged after the picture token",
+         "<Picture 1> he has short dark hair, brown eyes, and a full dark beard graying at the chin. "
+         "He is wearing a backward yellow cap.", split_prompt)
 check("ref_images input slots sit between character and timeline",
       [s["source"] for s in compile(tl([img(0, 144)], ref_mode="ON", characters=chars),
                                     extra_ref_image_count=2)["ref_image_slots"]],
