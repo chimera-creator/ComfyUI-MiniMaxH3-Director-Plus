@@ -211,6 +211,17 @@ nine_image_cast = json.dumps({
 check("external cast preserves nine character images",
       sum(len(character["images"]) for character in
           plan.merge_cast({}, nine_image_cast)["characters"]), 9)
+nine_character_cast = {
+    "characters": [{"images": [{"name": "char%d.png" % i}],
+                    "description": "character %d" % i}
+                   for i in range(1, 10)]
+}
+check("external cast preserves nine character slots",
+      len(plan.merge_cast({}, json.dumps(nine_character_cast))["characters"]), 9)
+check_in("the ninth character tag resolves",
+         "<Subject 9> steps forward",
+         compile(tl([img(0, 144, prompt="@char9 steps forward")], ref_mode="ON",
+                     characters=nine_character_cast["characters"]))["prompt"])
 check_in("external cast descriptions feed @char substitution",
          "a detective in a blue coat turns around",
          compile(tl([img(0, 144, prompt="@char1 turns around")], ref_mode="OFF",

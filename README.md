@@ -89,7 +89,7 @@ Five nodes, category **MiniMax H3**:
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
-| **MiniMax H3 Casting Director Plus** | A reusable three-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. |
+| **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
 | **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
@@ -97,7 +97,7 @@ Five nodes, category **MiniMax H3**:
 Editing features carried over from LTX Director: main track, reference-video track, audio
 track, ruler in seconds or frames, drag / resize / copy / paste, prompt zones per segment,
 waveform preview, filename labels, gear menu, workspace folder, chunked upload for large
-videos, drag-and-drop straight onto the node, and the `@char1` / `@char2` / `@char3`
+videos, drag-and-drop straight onto the node, and the `@char1` … `@char9`
 character slots including the optional local VLM "Analyze" button (Ollama / LM Studio /
 any OpenAI-compatible endpoint) with automatic VRAM release before a run.
 
@@ -243,7 +243,7 @@ These are enforced, with a warning naming exactly what was dropped:
 
 | Limit | Value |
 |---|---|
-| Reference images | ≤ 9 — the three character slots *and* the `ref_images` input share this pool |
+| Reference images | ≤ 9 — the nine character slots *and* the `ref_images` input share this pool |
 | Reference videos | ≤ 3 clips, each 2–15 s, **≤ 15 s total** |
 | Reference audio | ≤ 3 clips |
 | **All types together** | **≤ 12 files** |
@@ -256,7 +256,7 @@ carry over between them.
 
 ### Character slots and the Analyze button
 
-Drop a face or a full-body shot into `@char1` … `@char3` and write `@char1` in a prompt;
+Drop a face or a full-body shot into `@char1` … `@char9` and write `@char1` in a prompt;
 it expands to `<Subject 1>` (MiniMax notation) or `<Picture 1>` (ComfyUI notation) and the
 image is attached as a reference. This is the **Refs ON (ref2va)** path.
 
@@ -277,7 +277,7 @@ With Ollama the node also asks it to unload the model before a render, so the VL
 sit in VRAM while H3 samples.
 
 If you want the same cast shared by several Director nodes, use **MiniMax H3 Casting
-Director Plus**. It has the same three `@char1` … `@char3` slots, up to nine character
+Director Plus**. It has the same nine `@char1` … `@char9` slots, up to nine character
 images total, image upload, manual description and Analyze controls. Connect its `CAST`
 output to each Director's `cast` input. An external cast replaces only the Director's
 character slots; the Director's timeline, prompt overrides and sound fields remain

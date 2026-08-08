@@ -4,15 +4,17 @@ import json
 
 from comfy_api.latest import io
 
+MAX_CHARACTERS = 9
+
+
+def _empty_character():
+    return {"images": [], "description": ""}
+
 
 def _empty_cast():
     return {
         "version": 1,
-        "characters": [
-            {"images": [], "description": ""},
-            {"images": [], "description": ""},
-            {"images": [], "description": ""},
-        ],
+        "characters": [_empty_character() for _ in range(MAX_CHARACTERS)],
         "analyzeProvider": "ollama",
         "analyzeBaseUrl": "",
         "analyzeModel": "",
@@ -32,15 +34,15 @@ def _normalise_cast(cast_data):
     characters = value.get("characters")
     if isinstance(characters, list):
         result["characters"] = []
-        for item in characters[:3]:
+        for item in characters[:MAX_CHARACTERS]:
             item = item if isinstance(item, dict) else {}
             images = item.get("images") if isinstance(item.get("images"), list) else []
             result["characters"].append({
                 "images": images,
                 "description": str(item.get("description") or ""),
             })
-        while len(result["characters"]) < 3:
-            result["characters"].append({"images": [], "description": ""})
+        while len(result["characters"]) < MAX_CHARACTERS:
+            result["characters"].append(_empty_character())
 
     for key in ("analyzeProvider", "analyzeBaseUrl", "analyzeModel", "analyzeApiKey"):
         if value.get(key) is not None:
@@ -49,7 +51,7 @@ def _normalise_cast(cast_data):
 
 
 class MiniMaxH3CastingDirector(io.ComfyNode):
-    """Three reusable character slots that can feed a MiniMax H3 Director."""
+    """Nine reusable character slots that can feed a MiniMax H3 Director."""
 
     @classmethod
     def define_schema(cls):
@@ -58,7 +60,7 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
             display_name="MiniMax H3 Casting Director Plus",
             category="MiniMax H3",
             description=(
-                "Create up to three reusable character references. Connect CAST to the "
+                "Create up to nine reusable character references. Connect CAST to the "
                 "MiniMax H3 Director Plus cast input; the Director keeps its own slots "
                 "as a backward-compatible fallback when CAST is not connected."
             ),

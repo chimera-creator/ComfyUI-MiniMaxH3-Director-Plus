@@ -26,6 +26,7 @@ MAX_REF_IMAGES = 9          # "<= 9 images"
 MAX_REF_VIDEOS = 3          # "<= 3 clips"
 MAX_REF_AUDIOS = 3          # "<= 3 clips"
 MAX_REF_FILES = 12          # "at most 12 files in total across all input types"
+MAX_CHARACTERS = 9          # The Director and Casting Director expose nine slots.
 REF_VIDEO_MIN_SEC = 2.0     # "each clip must be 2-15 seconds long"
 REF_VIDEO_MAX_SEC = 15.0
 REF_VIDEO_TOTAL_SEC = 15.0  # "total duration <= 15 seconds"
@@ -57,10 +58,10 @@ def fmt_seconds(value):
 
 
 def substitute_char_tags(text, replacements):
-    """Swap @character1/@char1 .. @character3/@char3 for their resolved text."""
+    """Swap @character1/@char1 .. @character9/@char9 for their resolved text."""
     if not text:
         return text or ""
-    for slot in (1, 2, 3):
+    for slot in range(1, MAX_CHARACTERS + 1):
         value = replacements.get(slot)
         if not value:
             continue
@@ -103,7 +104,7 @@ def parse_cast(cast_data):
         return None
 
     characters = []
-    for item in raw["characters"][:3]:
+    for item in raw["characters"][:MAX_CHARACTERS]:
         if not isinstance(item, dict):
             item = {}
         images = item.get("images")

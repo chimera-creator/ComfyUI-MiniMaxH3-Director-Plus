@@ -273,7 +273,7 @@ class MiniMaxH3Director(io.ComfyNode):
                 io.String.Input(
                     "cast", force_input=True, optional=True,
                     tooltip="Optional output from MiniMax H3 Casting Director Plus. When connected, "
-                            "its three character slots replace the Director's built-in character slots."),
+                            "its nine character slots replace the Director's built-in character slots."),
                 io.Boolean.Input("use_custom_audio", default=False, optional=True,
                                  tooltip="ON: timeline audio clips are used as <Audio j> references (ref2va). "
                                          "The mixdown is always available on combined_audio regardless."),

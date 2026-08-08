@@ -1,5 +1,5 @@
 // MiniMax H3 Casting Director Plus
-// A standalone version of the Director's three reusable character slots.
+// A standalone version of the Director's nine reusable character slots.
 
 const { app } = window.comfyAPI.app;
 const { api } = window.comfyAPI.api;
@@ -11,13 +11,14 @@ const CASTING_DEFAULTS = {
   analyzeApiKey: "",
 };
 const MAX_CAST_IMAGES = 9;
+const MAX_CHARACTERS = 9;
 
 const emptyCharacter = () => ({ images: [], description: "" });
 
 function emptyCast() {
   return {
     version: 1,
-    characters: [emptyCharacter(), emptyCharacter(), emptyCharacter()],
+    characters: Array.from({ length: MAX_CHARACTERS }, emptyCharacter),
     ...CASTING_DEFAULTS,
   };
 }
@@ -29,11 +30,11 @@ function parseCast(value) {
   if (!parsed || typeof parsed !== "object") return cast;
 
   if (Array.isArray(parsed.characters)) {
-    cast.characters = parsed.characters.slice(0, 3).map((item) => ({
+    cast.characters = parsed.characters.slice(0, MAX_CHARACTERS).map((item) => ({
       images: Array.isArray(item?.images) ? item.images : [],
       description: String(item?.description || ""),
     }));
-    while (cast.characters.length < 3) cast.characters.push(emptyCharacter());
+    while (cast.characters.length < MAX_CHARACTERS) cast.characters.push(emptyCharacter());
   }
   for (const key of ["analyzeProvider", "analyzeBaseUrl", "analyzeModel", "analyzeApiKey"]) {
     if (parsed[key] !== undefined) cast[key] = String(parsed[key] || "");
@@ -57,8 +58,8 @@ const CASTING_STYLES = `
   .mmxd-casting-setting-label { width:108px; color:#888; font-size:10px; }
   .mmxd-casting-setting-input, .mmxd-casting-setting-select { flex:1; min-width:0; height:22px; box-sizing:border-box; background:#242424; color:#ddd; border:1px solid #444; border-radius:3px; padding:2px 5px; font-size:10px; }
   .mmxd-casting-setting-note { color:#666; font-size:9px; line-height:1.3; padding:4px 0 0 114px; }
-  .mmxd-casting-slots { display:flex; gap:10px; width:100%; box-sizing:border-box; }
-  .mmxd-casting-slot { flex:1 1 0; min-width:0; height:150px; box-sizing:border-box; background:#1e1e1e; border:1.5px dashed #444; border-radius:7px; padding:4px; position:relative; cursor:pointer; overflow:hidden; }
+  .mmxd-casting-slots { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; width:100%; box-sizing:border-box; }
+  .mmxd-casting-slot { min-width:0; height:150px; box-sizing:border-box; background:#1e1e1e; border:1.5px dashed #444; border-radius:7px; padding:4px; position:relative; cursor:pointer; overflow:hidden; }
   .mmxd-casting-slot:hover { border-color:#666; background:#252525; }
   .mmxd-casting-slot.drag-over { border-color:#4fff8f; background:rgba(79,255,143,.05); }
   .mmxd-casting-label { font-size:10px; font-weight:700; color:#888; text-align:center; margin-bottom:2px; pointer-events:none; }
@@ -122,7 +123,7 @@ app.registerExtension({
       });
       uiWidget.serialize = false;
       uiWidget.computeSize = function (width) {
-        return [Math.max(10, width || node.size?.[0] || 760), settingsOpen ? 302 : 193];
+        return [Math.max(10, width || node.size?.[0] || 760), settingsOpen ? 648 : 528];
       };
 
       let cast = parseCast(castWidget?.value || "");
@@ -322,7 +323,7 @@ app.registerExtension({
 
       const renderSlots = () => {
         slots.innerHTML = "";
-        for (let index = 0; index < 3; index++) {
+        for (let index = 0; index < MAX_CHARACTERS; index++) {
           const slot = document.createElement("div");
           slot.className = "mmxd-casting-slot";
           slot.dataset.index = index;
@@ -401,7 +402,7 @@ app.registerExtension({
       slots.className = "mmxd-casting-slots";
       const footer = document.createElement("div");
       footer.className = "mmxd-casting-footer";
-      footer.textContent = "Up to 9 reference images total across the three characters. @char1–@char3 work in Director prompts.";
+      footer.textContent = "Up to 9 characters and 9 reference images total. Use @char1–@char9 in Director prompts.";
       container.appendChild(head); container.appendChild(settings); container.appendChild(slots); container.appendChild(footer);
 
       const refresh = () => {

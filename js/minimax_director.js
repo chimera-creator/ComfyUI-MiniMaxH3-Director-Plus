@@ -38,6 +38,7 @@ const GUIDE_ROW_HEIGHT = 54;
 const GLOBAL_PROMPT_MIN_H = 60;                                    // the prompt box alone
 const GLOBAL_PROP_MIN_H = GLOBAL_PROMPT_MIN_H + GUIDE_ROW_HEIGHT + SOUND_ROW_HEIGHT;
 const MAX_THUMBNAIL_DIM = 512; // Increased to maintain quality for taller images
+const MAX_CHARACTERS = 9;
 
 const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
 
@@ -651,8 +652,8 @@ const STYLES = `
     margin: 4px 0;
   }
   /* --- Character reference slots --- */
-  .mmxd-characters-container { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; margin-bottom: 4px; box-sizing: border-box; width: 100%; flex-shrink: 0; }
-  .mmxd-character-slot { flex: 1; background: #1e1e1e; border: 1.5px dashed #444; border-radius: 8px; height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 4px; position: relative; cursor: pointer; overflow: hidden; transition: all 0.2s ease; box-sizing: border-box; }
+  .mmxd-characters-container { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 6px; margin-bottom: 4px; box-sizing: border-box; width: 100%; flex-shrink: 0; }
+  .mmxd-character-slot { min-width: 0; background: #1e1e1e; border: 1.5px dashed #444; border-radius: 8px; height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 4px; position: relative; cursor: pointer; overflow: hidden; transition: all 0.2s ease; box-sizing: border-box; }
   .mmxd-character-slot:hover { border-color: #666; background: #252525; }
   .mmxd-character-slot.drag-over { border-color: #4fff8f; background: rgba(79, 255, 143, 0.05); }
   .mmxd-character-label { font-size: 10px; font-weight: bold; color: #888; margin-bottom: 2px; pointer-events: none; }
@@ -856,11 +857,7 @@ function parseInitial(jsonStr) {
     analyzeBaseUrl: "",
     analyzeModel: "",
     analyzeApiKey: "",
-    characters: [
-      { images: [], description: "" },
-      { images: [], description: "" },
-      { images: [], description: "" }
-    ]
+    characters: Array.from({ length: MAX_CHARACTERS }, () => ({ images: [], description: "" }))
   };
   try {
     if (jsonStr) {
@@ -902,7 +899,8 @@ function parseInitial(jsonStr) {
           images: Array.isArray(c.images) ? c.images : [],
           description: c.description || ""
         }));
-        while (parsed.characters.length < 3) {
+        parsed.characters = parsed.characters.slice(0, MAX_CHARACTERS);
+        while (parsed.characters.length < MAX_CHARACTERS) {
           parsed.characters.push({ images: [], description: "" });
         }
       }
@@ -9205,16 +9203,12 @@ class TimelineEditor {
     container.className = "mmxd-characters-container";
 
     if (!this.timeline.characters) {
-      this.timeline.characters = [
-        { images: [], description: "" },
-        { images: [], description: "" },
-        { images: [], description: "" }
-      ];
+      this.timeline.characters = Array.from({ length: MAX_CHARACTERS }, () => ({ images: [], description: "" }));
     }
 
     this.characterSlots = [];
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < MAX_CHARACTERS; i++) {
       const slot = document.createElement("div");
       slot.className = "mmxd-character-slot";
       slot.dataset.index = i;
@@ -9259,7 +9253,7 @@ class TimelineEditor {
 
     parent.appendChild(container);
     this.charPanelContainer = container;
-    this.charPanelHeight = 150;
+    this.charPanelHeight = 384;
     this.updateCharacterSlotsUI();
   }
 
@@ -9355,14 +9349,10 @@ class TimelineEditor {
   updateCharacterSlotsUI() {
     if (!this.characterSlots) return;
     if (!this.timeline.characters) {
-      this.timeline.characters = [
-        { images: [], description: "" },
-        { images: [], description: "" },
-        { images: [], description: "" }
-      ];
+      this.timeline.characters = Array.from({ length: MAX_CHARACTERS }, () => ({ images: [], description: "" }));
     }
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < MAX_CHARACTERS; i++) {
       const slot = this.characterSlots[i];
       const data = this.timeline.characters[i] || { images: [], description: "" };
       slot.innerHTML = "";
@@ -9519,11 +9509,9 @@ class TimelineEditor {
     if (!this._autocompleteMenus) this._autocompleteMenus = [];
     this._autocompleteMenus.push(menu);
 
-    const suggestions = [
-      { tag: "@char1", label: "Character 1" },
-      { tag: "@char2", label: "Character 2" },
-      { tag: "@char3", label: "Character 3" }
-    ];
+    const suggestions = Array.from({ length: MAX_CHARACTERS }, (_, i) => ({
+      tag: `@char${i + 1}`, label: `Character ${i + 1}`
+    }));
 
     let activeIndex = 0;
     let showMenu = false;
