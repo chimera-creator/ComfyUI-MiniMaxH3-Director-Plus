@@ -50,6 +50,35 @@ const mergeDirectorCastDescription = (character) => {
   return String(character?.description || "").trim();
 };
 
+const applyDirectorWardrobeItems = (cast) => {
+  if (!cast || !Array.isArray(cast.characters)) return cast;
+  const characters = cast.characters.map((character) => ({
+    ...character,
+    wardrobe: String(character?.wardrobe || "").trim(),
+  }));
+  for (const item of Array.isArray(cast.wardrobe_items) ? cast.wardrobe_items : []) {
+    const description = String(item?.description || "").trim();
+    if (!description) continue;
+    const sentence = /^(he|she)\s+/i.test(description)
+      ? description
+      : `he is wearing ${description.charAt(0).toLowerCase()}${description.slice(1)}`;
+    const punctuation = /[.!?]$/.test(sentence) ? "" : ".";
+    for (const slot of (item?.character_slots || item?.characters || [])) {
+      const index = Number(slot) - 1;
+      if (index < 0 || index >= characters.length) continue;
+      characters[index].wardrobe = [characters[index].wardrobe, sentence + punctuation]
+        .filter(Boolean).join(" ");
+    }
+  }
+  return {
+    ...cast,
+    characters: characters.map((character) => ({
+      ...character,
+      description: mergeDirectorCastDescription(character),
+    })),
+  };
+};
+
 const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
 
 function hideWidget(w) {
@@ -9217,18 +9246,15 @@ class TimelineEditor {
       const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
       const source = link ? app.graph?.getNodeById(link.origin_id) : null;
       const widget = source?.widgets?.find((item) => item.name === "cast_data");
-      const raw = widget?.value || source?.properties?.cast_data || "";
+      const raw = source?.properties?.cast_wardrobe_output
+        || widget?.value || source?.properties?.cast_data || "";
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
       if (!parsed || !Array.isArray(parsed.characters)) return null;
-      return {
+      return applyDirectorWardrobeItems({
         ...parsed,
         characters: parsed.characters
           .filter((character) => character?.hired !== false)
-          .map((character) => ({
-            ...character,
-            description: mergeDirectorCastDescription(character),
-          })),
-      };
+      });
     } catch (_) {
       return null;
     }
@@ -13013,7 +13039,8 @@ app.registerExtension({
               const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
               const source = link ? app.graph?.getNodeById(link.origin_id) : null;
               const widget = source?.widgets?.find(item => item.name === "cast_data");
-              return readJson(widget?.value || source?.properties?.cast_data || "");
+              return readJson(source?.properties?.cast_wardrobe_output
+                || widget?.value || source?.properties?.cast_data || "");
             } catch (_) {
               return {};
             }
@@ -13032,6 +13059,10 @@ app.registerExtension({
             const characterImages = characters.reduce((sum, character) =>
               sum + (character?.hired === false ? 0 :
                 (Array.isArray(character?.images) ? character.images.length : 0)), 0);
+            const wardrobeImages = (Array.isArray(externalCast.wardrobe_items)
+              ? externalCast.wardrobe_items : []).reduce((sum, item) =>
+                (item?.character_slots || item?.characters || []).length > 0
+                  ? sum + (Array.isArray(item?.images) ? item.images.length : 0) : sum, 0);
             const extraImageInput = node.inputs?.some(input =>
               input.name === "ref_images" && input.link != null) ? 1 : 0;
             const start = Math.max(0, Number(getW("start_frame")?.value ?? timeline.normalStartFrame ?? 0));
@@ -13045,7 +13076,7 @@ app.registerExtension({
             const audios = (timeline.audioSegments || []).filter(segment =>
               (segment?.audioFile || segment?.audioB64 || segment?._blobUrl || segment?._audioBuffer) &&
               overlapsBudgetWindow(segment, start, end)).length;
-            const images = characterImages + extraImageInput + timelineImages;
+            const images = characterImages + wardrobeImages + extraImageInput + timelineImages;
             const total = images + videos + audios;
             const overImage = images > 9;
             const overVideo = videos > 3;
@@ -13068,11 +13099,11 @@ app.registerExtension({
               referenceBudgetHint.style.color = "#d86f6f";
             } else {
               referenceBudgetHint.textContent = refModeOn
-                ? "Character cast + timeline references in the current window"
+                ? "Character and wardrobe cast + timeline references in the current window"
                 : "Reference files are not sent until Refs ON";
               referenceBudgetHint.style.color = "#666";
             }
-            referenceBudget.title = "Images include cast images, the ref_images input, and timeline image anchors. "
+            referenceBudget.title = "Images include character/wardrobe cast images, the ref_images input, and timeline image anchors. "
               + "Video and audio counts use clips overlapping the current render window.";
           };
           node._mmxRefreshReferenceCounter = refreshReferenceCounter;
@@ -13268,7 +13299,8 @@ app.registerExtension({
             const link = linkId != null ? app.graph?.links?.[linkId] : null;
             const source = link ? app.graph?.getNodeById(link.origin_id) : null;
             const castWidget = source?.widgets?.find(x => x.name === "cast_data");
-            return castWidget?.value || source?.properties?.cast_data || "";
+            return source?.properties?.cast_wardrobe_output
+              || castWidget?.value || source?.properties?.cast_data || "";
           } catch (_) {
             return "";
           }

@@ -203,6 +203,24 @@ split_prompt = compile(tl([img(0, 144)], ref_mode="ON", characters=[split_charac
 check_in("split character fields are merged after the picture token",
          "<Picture 1> he has short dark hair, brown eyes, and a full dark beard graying at the chin. "
          "He is wearing a backward yellow cap.", split_prompt)
+wardrobe_cast = plan.merge_cast({}, json.dumps({
+    "characters": [{"images": [{"name": "char.png"}],
+                    "appearance": "He has brown eyes.",
+                    "wardrobe": "he is wearing a blue shirt."}],
+    "wardrobe_items": [{"images": [{"name": "jacket.png"}],
+                        "description": "a red jacket",
+                        "character_slots": [1]}],
+}))
+check("wardrobe item assignments survive cast parsing",
+      wardrobe_cast["wardrobe_items"][0]["character_slots"], [1])
+wardrobe_prompt = compile(tl([img(0, 144)], ref_mode="ON",
+                              characters=wardrobe_cast["characters"],
+                              wardrobe_items=wardrobe_cast["wardrobe_items"]))
+check("wardrobe image follows the character image",
+      [slot["source"] for slot in wardrobe_prompt["ref_image_slots"][:2]],
+      ["char", "wardrobe"])
+check_in("assigned wardrobe description reaches the subject definition",
+         "he is wearing a red jacket.", wardrobe_prompt["prompt"])
 check("ref_images input slots sit between character and timeline",
       [s["source"] for s in compile(tl([img(0, 144)], ref_mode="ON", characters=chars),
                                     extra_ref_image_count=2)["ref_image_slots"]],

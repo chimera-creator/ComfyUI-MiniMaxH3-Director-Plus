@@ -38,6 +38,24 @@ def _empty_cast():
     }
 
 
+def _active_cast_payload(value):
+    """Return the compact cast shape used by both CAST outputs."""
+    return {
+        "version": value["version"],
+        "characters": [
+            {
+                **character,
+                # Keep the old Director-facing field populated for workflows and
+                # integrations that only know about `description`.
+                "description": _merge_character_description(character),
+                "hired": True,
+            }
+            for character in value["characters"]
+            if character.get("hired", True)
+        ],
+    }
+
+
 def _normalise_cast(cast_data):
     try:
         value = json.loads(cast_data) if isinstance(cast_data, str) else cast_data
@@ -95,6 +113,10 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
                     display_name="CAST",
                     tooltip="Character references and descriptions for MiniMax H3 Director Plus.",
                 ),
+                io.String.Output(
+                    display_name="CAST + WARDROBE",
+                    tooltip="Character references plus wardrobe-item assignments for Wardrobe Director.",
+                ),
             ],
         )
 
@@ -103,18 +125,12 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
         value = _normalise_cast(cast_data)
         # Analyzer settings stay local to this node; the graph only needs the reusable
         # character payload and should not carry an API key into the Director socket.
-        payload = {"version": value["version"], "characters": [
-            {
-                **character,
-                # Keep the old Director-facing field populated for workflows and
-                # integrations that only know about `description`.
-                "description": _merge_character_description(character),
-                "hired": True,
-            }
-            for character in value["characters"]
-            if character.get("hired", True)
-        ]}
-        return io.NodeOutput(json.dumps(payload, separators=(",", ":")))
+        payload = _active_cast_payload(value)
+        cast_json = json.dumps(payload, separators=(",", ":"))
+        # The second socket deliberately starts with an empty item list. The Wardrobe
+        # Director owns item state; this socket is the stable cast hand-off into it.
+        wardrobe_json = json.dumps({**payload, "wardrobe_items": []}, separators=(",", ":"))
+        return io.NodeOutput(cast_json, wardrobe_json)
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3CastingDirectorPlusCS": MiniMaxH3CastingDirector}

@@ -27,6 +27,7 @@ MAX_REF_VIDEOS = 3          # "<= 3 clips"
 MAX_REF_AUDIOS = 3          # "<= 3 clips"
 MAX_REF_FILES = 12          # "at most 12 files in total across all input types"
 MAX_CHARACTERS = 9          # The Director and Casting Director expose nine slots.
+MAX_WARDROBE_ITEMS = 9     # The Wardrobe Director exposes nine item slots.
 REF_VIDEO_MIN_SEC = 2.0     # "each clip must be 2-15 seconds long"
 REF_VIDEO_MAX_SEC = 15.0
 REF_VIDEO_TOTAL_SEC = 15.0  # "total duration <= 15 seconds"
@@ -138,7 +139,34 @@ def parse_cast(cast_data):
             "description": description,
             "hired": True,
         })
-    return {"characters": characters}
+    wardrobe_items = []
+    raw_items = raw.get("wardrobe_items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    for item in raw_items[:MAX_WARDROBE_ITEMS]:
+        item = item if isinstance(item, dict) else {}
+        images = item.get("images") if isinstance(item.get("images"), list) else []
+        if not images and isinstance(item.get("image"), dict):
+            images = [item["image"]]
+        clean_images = [img for img in images
+                        if isinstance(img, dict) and (img.get("name") or img.get("b64"))]
+        assignments = item.get("character_slots", item.get("characters", []))
+        if not isinstance(assignments, list):
+            assignments = []
+        clean_assignments = []
+        for value in assignments:
+            try:
+                slot = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= slot <= len(characters) and slot not in clean_assignments:
+                clean_assignments.append(slot)
+        wardrobe_items.append({
+            "images": clean_images[:1],
+            "description": str(item.get("description") or "").strip(),
+            "character_slots": clean_assignments,
+        })
+    return {"characters": characters, "wardrobe_items": wardrobe_items}
 
 
 def merge_cast(tdata, cast_data):
@@ -204,7 +232,8 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
     subject_of_slot = {}
     for slot_index, slot in enumerate(char_slots):
         ordinals = [i + 1 for i, s in enumerate(ref_image_slots)
-                    if s.get("source") == "char" and s.get("slot") == slot_index]
+                    if s.get("source") in ("char", "wardrobe")
+                    and s.get("slot") == slot_index]
         if not ordinals:
             continue
         subject = len(subject_of_slot) + 1
@@ -451,6 +480,35 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         char_slots.append({"images": images_list, "appearance": appearance,
                            "wardrobe": wardrobe, "description": description})
 
+    wardrobe_items = [item for item in (tdata.get("wardrobe_items", []) or [])
+                      if isinstance(item, dict)]
+    for slot_index, slot in enumerate(char_slots):
+        assigned_descriptions = []
+        for item in wardrobe_items:
+            assignments = item.get("character_slots", item.get("characters", []))
+            if slot_index + 1 not in assignments:
+                continue
+            text = str(item.get("description") or "").strip()
+            if not text:
+                continue
+            # Item descriptions are deliberately free text in the UI. Turn a fragment
+            # such as "a red jacket" into a sentence that can be appended to the cast's
+            # wardrobe field, while preserving a sentence the user already wrote.
+            lower = text.lower()
+            if lower.startswith(("he ", "she ")):
+                sentence = text
+            else:
+                fragment = text[:1].lower() + text[1:]
+                sentence = "he is wearing " + fragment
+            if sentence[-1:] not in ".!?":
+                sentence += "."
+            assigned_descriptions.append(sentence)
+        if assigned_descriptions:
+            slot["wardrobe"] = " ".join(
+                part for part in (slot.get("wardrobe", ""), *assigned_descriptions) if part)
+            slot["description"] = " ".join(
+                part for part in (slot.get("appearance", ""), slot["wardrobe"]) if part)
+
     # --- shots + image events ---
     shots, events = [], []
     if retake:
@@ -497,7 +555,12 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
 
     if ref_mode_on:
         for slot_idx, slot in enumerate(char_slots):
-            if not slot["images"] or len(ref_image_slots) >= MAX_REF_IMAGES:
+            assigned_items = [
+                (item_index, item) for item_index, item in enumerate(wardrobe_items)
+                if slot_idx + 1 in item.get("character_slots", item.get("characters", []))
+            ]
+            has_wardrobe_image = any(item.get("images") for _, item in assigned_items)
+            if not slot["images"] and not has_wardrobe_image:
                 continue
             char_tag_values[slot_idx + 1] = "<Picture %d>" % (len(ref_image_slots) + 1)
             for img in slot["images"]:
@@ -505,6 +568,12 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                     break
                 ref_image_slots.append({"source": "char", "slot": slot_idx, "image": img})
                 ref_image_slots[-1]["slot"] = slot_idx
+            for item_index, item in assigned_items:
+                for img in item.get("images", []) or []:
+                    if len(ref_image_slots) >= MAX_REF_IMAGES:
+                        break
+                    ref_image_slots.append({"source": "wardrobe", "slot": slot_idx,
+                                            "item": item_index, "image": img})
 
         for _ in range(max(0, int(extra_ref_image_count))):
             if len(ref_image_slots) >= MAX_REF_IMAGES:

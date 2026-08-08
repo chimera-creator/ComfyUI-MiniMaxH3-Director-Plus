@@ -173,13 +173,16 @@ app.registerExtension({
         app.graph?.setDirtyCanvas?.(true, true);
         for (const other of app.graph?._nodes || []) {
           const castInput = other.inputs?.find((input) => input.name === "cast");
-          if (castInput?.link != null) {
-            const link = app.graph.links?.[castInput.link];
-            if (link?.origin_id === node.id) {
-              other._mmxRefreshCharacterSlots?.();
-              other._mmxRefreshPrompt?.();
-              other._mmxRefreshReferenceCounter?.();
-            }
+          const wardrobeInput = other.inputs?.find((input) => input.name === "cast_wardrobe");
+          const castLink = castInput?.link != null ? app.graph.links?.[castInput.link] : null;
+          const wardrobeLink = wardrobeInput?.link != null ? app.graph.links?.[wardrobeInput.link] : null;
+          if (castLink?.origin_id === node.id) {
+            other._mmxRefreshCharacterSlots?.();
+            other._mmxRefreshPrompt?.();
+            other._mmxRefreshReferenceCounter?.();
+          }
+          if (wardrobeLink?.origin_id === node.id) {
+            other._wardrobeRefresh?.();
           }
         }
       };

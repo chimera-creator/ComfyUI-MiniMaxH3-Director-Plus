@@ -84,12 +84,13 @@ can read it before you spend a render on it.
 
 ## What you get
 
-Five nodes, category **MiniMax H3**:
+Six nodes, category **MiniMax H3**:
 
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
 | **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. |
+| **MiniMax H3 Wardrobe Director Plus** | Assign up to nine clothing/accessory reference images and descriptions to the active cast. Connect `CAST + WARDROBE` from Casting Director, then connect its output to the Director's `cast` input. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
 | **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
@@ -281,11 +282,18 @@ sit in VRAM while H3 samples.
 If you want the same cast shared by several Director nodes, use **MiniMax H3 Casting
 Director Plus**. It has the same nine `@char1` … `@char9` slots, up to nine character
 images total, image upload, Appearance and Wardrobe inputs, and Analyze controls. Connect its `CAST`
-output to each Director's `cast` input, then use each slot's **HIRE** toggle to choose
+output to each Director's `cast` input, or connect `CAST + WARDROBE` to the Wardrobe Director.
+Use each slot's **HIRE** toggle to choose
 which characters pass through. Hired characters are compacted in order, so Casting slot 2
 becomes Director slot 1 when slot 1 is not hired. Use **REMOVE** to clear a cast member.
 An external cast replaces only the Director's character slots; the Director's timeline,
 prompt overrides and sound fields remain independent.
+
+The **MiniMax H3 Wardrobe Director Plus** has nine item slots. Drop one clothing or
+accessory reference image into an item, enter its item description, and assign it to one
+or more active characters. Its `CAST + WARDROBE` output carries those assignments into
+the Director, where each assigned item's image joins the character's reference images and
+its description is appended to that character's wardrobe description.
 
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the

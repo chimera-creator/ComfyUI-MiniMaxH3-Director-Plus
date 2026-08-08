@@ -469,7 +469,7 @@ class MiniMaxH3Director(io.ComfyNode):
             input_cursor = 0
             for slot in p["ref_image_slots"]:
                 src = slot["source"]
-                if src == "char":
+                if src in ("char", "wardrobe"):
                     img = slot["image"]
                     ref_image_tensors.append(
                         media.load_image_source(img.get("b64", ""), img.get("name", "")))
