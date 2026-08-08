@@ -12,23 +12,25 @@
 const { app } = window.comfyAPI.app;
 const { api } = window.comfyAPI.api;
 
-async function mmxdFetchProjects() {
-  const response = await api.fetchApi("/minimax_director/projects");
+async function mmxdFetchProjects(path = "") {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  const response = await api.fetchApi(`/minimax_director/projects${query}`);
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not list projects");
   return Array.isArray(result.projects) ? result.projects : [];
 }
 
-async function mmxdLoadProject(name) {
-  const response = await api.fetchApi(`/minimax_director/projects/load?name=${encodeURIComponent(name)}`);
+async function mmxdLoadProject(name, path = "") {
+  const query = `name=${encodeURIComponent(name)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
+  const response = await api.fetchApi(`/minimax_director/projects/load?${query}`);
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not load project");
   return result.project || {};
 }
 
-async function mmxdSaveProjectSource(project, source, data) {
+async function mmxdSaveProjectSource(project, source, data, path = "") {
   const response = await api.fetchApi("/minimax_director/projects/save", {
-    method: "POST", body: JSON.stringify({ project, source, data }),
+    method: "POST", body: JSON.stringify({ project, source, data, path }),
   });
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not save project");
@@ -13316,6 +13318,10 @@ app.registerExtension({
             const type = String(source?.comfyClass || source?.type || "").toLowerCase();
             return type.includes("enhance") ? source : null;
           };
+          const projectPathForNode = () => {
+            const source = originForInput(node, "project");
+            return String(source?.properties?.project_path || node.properties?.project_path || "").trim();
+          };
           const saveProject = async () => {
             const project = String(projectNameInput.value || "").trim();
             if (!project) {
@@ -13323,7 +13329,8 @@ app.registerExtension({
               projectNameInput.focus();
               return;
             }
-            node.properties = { ...(node.properties || {}), project_name: project };
+            const projectPath = projectPathForNode();
+            node.properties = { ...(node.properties || {}), project_name: project, project_path: projectPath };
             const timeline = node._timelineEditor?.timeline || readJson(getW("timeline_data")?.value || "{}");
             const cast = readJson(connectedCastData());
             const sources = connectedSourceNodes();
@@ -13354,23 +13361,24 @@ app.registerExtension({
               },
             };
             try {
-              let document = await mmxdSaveProjectSource(project, "director", directorData);
+              let document = await mmxdSaveProjectSource(project, "director", directorData, projectPath);
               if (sources.castingSource) {
                 document = await mmxdSaveProjectSource(project, "casting", sourcePayload(sources.castingSource, {
                   cast_data: sources.castingSource.properties?.cast_data || "",
-                }));
+                }), projectPath);
               }
               if (sources.wardrobeSource) {
                 document = await mmxdSaveProjectSource(project, "wardrobe", sourcePayload(sources.wardrobeSource, {
                   wardrobe_data: sources.wardrobeSource.properties?.wardrobe_data || "",
                   cast_wardrobe_output: sources.wardrobeSource.properties?.cast_wardrobe_output || "",
-                }));
+                }), projectPath);
               }
               if (enhance) {
                 document = await mmxdSaveProjectSource(project, "enhanced_prompt", sourcePayload(enhance, {
                   output_prompt: String(node.properties?.global_prompt || ""),
-                }));
+                }), projectPath);
               }
+              node.properties = { ...(node.properties || {}), project_path: String(document.project_path || projectPath) };
               renderProjectOptions(await mmxdFetchProjects());
               setProjectMessage(`Saved ${document.project_name} with ${document.resources?.length || 0} resources.`);
             } catch (error) {
@@ -13400,24 +13408,26 @@ app.registerExtension({
             const project = String(projectSelect.value || projectNameInput.value || "").trim();
             if (!project) return;
             try {
-              const document = await mmxdLoadProject(project);
+              const document = await mmxdLoadProject(project, projectPathForNode());
               applyProjectDirector(document.sources?.director);
               projectNameInput.value = project;
-              node.properties = { ...(node.properties || {}), project_name: project };
+              node.properties = { ...(node.properties || {}), project_name: project,
+                project_path: String(document.project_path || projectPathForNode()) };
               setProjectMessage(`Loaded ${project}.`);
             } catch (error) {
               setProjectMessage(error.message || String(error), true);
             }
           };
-          node._mmxProjectRefresh = async (projectName) => {
+          node._mmxProjectRefresh = async (projectName, projectPath = "") => {
             const project = String(projectName || "").trim();
             if (!project) return;
             try {
-              const document = await mmxdLoadProject(project);
+              const document = await mmxdLoadProject(project, projectPath);
               applyProjectDirector(document.sources?.director);
               projectNameInput.value = project;
               projectSelect.value = project;
-              node.properties = { ...(node.properties || {}), project_name: project };
+              node.properties = { ...(node.properties || {}), project_name: project,
+                project_path: String(document.project_path || projectPath || "") };
               setProjectMessage(`Project: ${project}`);
             } catch (error) {
               setProjectMessage(error.message || String(error), true);
@@ -13438,7 +13448,8 @@ app.registerExtension({
             const input = node.inputs?.find((item) => item.name === "project");
             const link = input?.link != null ? app.graph?.links?.[input.link] : null;
             const source = link ? app.graph?.getNodeById(link.origin_id) : null;
-            if (source?.properties?.project_name) void node._mmxProjectRefresh(source.properties.project_name);
+            if (source?.properties?.project_name) void node._mmxProjectRefresh(
+              source.properties.project_name, source.properties.project_path || "");
           }, 150);
 
           // Re-read widget values into the panel. Saved values are restored AFTER onNodeCreated,

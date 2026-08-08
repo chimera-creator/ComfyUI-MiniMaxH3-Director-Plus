@@ -545,11 +545,12 @@ app.registerExtension({
         const required = node.computeSize?.()?.[1] || 0;
         if (required > (node.size?.[1] || 0)) node.setSize?.([node.size[0], required]);
       };
-      const refreshFromProject = async (projectName) => {
+      const refreshFromProject = async (projectName, projectPath = "") => {
         const project = String(projectName || "").trim();
         if (!project) return;
         try {
-          const response = await api.fetchApi(`/minimax_director/projects/load?name=${encodeURIComponent(project)}`);
+          const query = `name=${encodeURIComponent(project)}${projectPath ? `&path=${encodeURIComponent(projectPath)}` : ""}`;
+          const response = await api.fetchApi(`/minimax_director/projects/load?${query}`);
           const result = await response.json();
           if (result.status !== "success") throw new Error(result.message || "Could not load project");
           const saved = result.project?.sources?.casting;
@@ -561,6 +562,8 @@ app.registerExtension({
             if (castWidget.element) castWidget.element.value = castWidget.value;
           }
           node._castingData = JSON.stringify(cast);
+          node.properties = { ...(node.properties || {}), project_name: project,
+            project_path: String(result.project?.project_path || projectPath || "") };
           refreshSettings();
           renderSlots();
           save();
@@ -578,7 +581,7 @@ app.registerExtension({
         const input = node.inputs?.find((item) => item.name === "project");
         const link = input?.link != null ? app.graph?.links?.[input.link] : null;
         const source = link ? app.graph?.getNodeById(link.origin_id) : null;
-        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name);
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name, source.properties.project_path || "");
       }, 150);
     };
 

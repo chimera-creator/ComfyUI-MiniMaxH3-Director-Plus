@@ -92,7 +92,7 @@ Eight nodes, category **MiniMax H3**:
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
-| **MiniMax H3 Director Project Plus** | Select or create a named project and emit its shared project-data payload. Connect `PROJECT DATA` to the optional `project` inputs on Casting Director, Wardrobe Director, Location Scout, and Director. |
+| **MiniMax H3 Director Project Plus** | Select or create a named project, browse to an external project folder for loading/saving, and emit its shared project-data payload. Connect `PROJECT DATA` to the optional `project` inputs on Casting Director, Wardrobe Director, Location Scout, and Director. |
 | **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. Its `ANALYZE SETTINGS` output can connect to Wardrobe Director for item analysis. |
 | **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` and optionally `ANALYZE SETTINGS` from Casting Director, then connect its output to the Director's `cast` input. |
 | **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Saves set data under `Projects/<project>/sets/`. |
@@ -260,8 +260,11 @@ connections are optional; unconnected Director character slots, timeline prompts
 manual sound fields remain available.
 
 The Project node creates the `Projects/<project>/` folder on demand and emits the master
-project JSON. Connected authoring nodes use the matching saved source when one exists, so
-the same project selection can restore cast, wardrobe, sets, and Director timeline data.
+project JSON. Use **BROWSE** to choose an existing project folder or an empty folder for a
+new project; the selected path is stored in `PROJECT DATA`, so connected authoring nodes and
+Director saves use the same location. Connected authoring nodes use the matching saved source
+when one exists, so the same project selection can restore cast, wardrobe, sets, and Director
+timeline data. Folder browsing opens a native picker on the machine running ComfyUI.
 
 | Track | Drop this | Becomes |
 |---|---|---|

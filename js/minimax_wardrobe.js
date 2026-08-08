@@ -50,17 +50,18 @@ async function fetchProjects() {
   return Array.isArray(result.projects) ? result.projects : [];
 }
 
-async function loadProject(name) {
-  const response = await api.fetchApi(`/minimax_director/projects/load?name=${encodeURIComponent(name)}`);
+async function loadProject(name, path = "") {
+  const query = `name=${encodeURIComponent(name)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
+  const response = await api.fetchApi(`/minimax_director/projects/load?${query}`);
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not load project");
   return result.project || {};
 }
 
-async function saveProjectSource(project, source, data) {
+async function saveProjectSource(project, source, data, path = "") {
   const response = await api.fetchApi("/minimax_director/projects/save", {
     method: "POST",
-    body: JSON.stringify({ project, source, data }),
+    body: JSON.stringify({ project, source, data, path }),
   });
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not save project");
@@ -444,7 +445,7 @@ app.registerExtension({
             wardrobe_data: wardrobe,
             cast_wardrobe: sourceCastFor(node),
             analyze_settings: sourceAnalyzeSettingsFor(node),
-          });
+          }, node.properties?.project_path || "");
           projectList = await fetchProjects();
           renderProjectOptions();
           setProjectStatus(`Saved ${document.project_name}.`);
@@ -718,11 +719,11 @@ app.registerExtension({
         renderItems();
         save();
       };
-      const refreshFromProject = async (projectName) => {
+      const refreshFromProject = async (projectName, projectPath = "") => {
         const project = String(projectName || "").trim();
         if (!project) return;
         try {
-          const document = await loadProject(project);
+          const document = await loadProject(project, projectPath);
           const saved = document?.sources?.wardrobe;
           const value = saved?.wardrobe_data || saved?.widgets?.wardrobe_data;
           if (!value) return;
@@ -733,7 +734,8 @@ app.registerExtension({
           }
           node._wardrobeData = JSON.stringify(wardrobe);
           selectedProject = project;
-          node.properties = { ...(node.properties || {}), project_name: project };
+          node.properties = { ...(node.properties || {}), project_name: project,
+            project_path: String(document.project_path || projectPath || "") };
           if (projectNameInput) projectNameInput.value = project;
           renderItems();
           save();
@@ -753,7 +755,7 @@ app.registerExtension({
         const input = node.inputs?.find((item) => item.name === "project");
         const link = input?.link != null ? app.graph?.links?.[input.link] : null;
         const source = link ? app.graph?.getNodeById(link.origin_id) : null;
-        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name);
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name, source.properties.project_path || "");
       }, 150);
     };
 

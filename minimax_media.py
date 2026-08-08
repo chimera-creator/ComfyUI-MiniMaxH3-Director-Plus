@@ -805,12 +805,39 @@ async def analyze_location_endpoint(request):
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
+def _browse_project_folder():
+    """Open a native folder picker when ComfyUI is running on the local desktop."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askdirectory(title="Select MiniMax H3 project folder")
+        root.destroy()
+        return selected or ""
+    except Exception as error:
+        log.warning("[MiniMaxDirector] Project folder picker unavailable: %s", error)
+        return ""
+
+
+@PromptServer.instance.routes.get("/minimax_director/projects/browse")
+async def browse_project_folder_endpoint(request):
+    try:
+        loop = asyncio.get_running_loop()
+        path = await loop.run_in_executor(None, _browse_project_folder)
+        return web.json_response({"status": "success", "path": path})
+    except Exception as error:
+        log.error("[MiniMaxDirector] Failed to browse for a project folder: %s", error)
+        return web.json_response({"status": "error", "message": str(error)}, status=500)
+
+
 @PromptServer.instance.routes.get("/minimax_director/projects")
 async def list_projects_endpoint(request):
-    """List saved project folders without exposing absolute filesystem paths."""
+    """List saved project folders, including their selected storage paths."""
     try:
         from .minimax_projects import list_projects
-        return web.json_response({"status": "success", "projects": list_projects()})
+        return web.json_response({"status": "success", "projects": list_projects(request.query.get("path"))})
     except Exception as e:
         log.error("[MiniMaxDirector] Failed to list projects: %s", e)
         return web.json_response({"status": "error", "message": str(e)}, status=500)
@@ -819,9 +846,12 @@ async def list_projects_endpoint(request):
 @PromptServer.instance.routes.get("/minimax_director/projects/load")
 async def load_project_endpoint(request):
     try:
-        from .minimax_projects import load_project
+        from .minimax_projects import load_project, load_project_at_path
         project_name = request.query.get("name", "")
-        document = load_project(project_name)
+        project_path = request.query.get("path", "")
+        document = load_project_at_path(project_path) if project_path else load_project(project_name)
+        if document is None and project_path and project_name:
+            document = load_project(project_name, project_path)
         if document is None:
             return web.json_response({"status": "error", "message": "Project not found."}, status=404)
         return web.json_response({"status": "success", "project": document})
@@ -837,7 +867,7 @@ async def create_project_endpoint(request):
     try:
         from .minimax_projects import ensure_project
         data = await request.json()
-        document = ensure_project(data.get("project"))
+        document = ensure_project(data.get("project"), data.get("path"))
         return web.json_response({"status": "success", "project": document})
     except ValueError as e:
         return web.json_response({"status": "error", "message": str(e)}, status=400)
@@ -853,7 +883,7 @@ async def save_project_endpoint(request):
         data = await request.json()
         document = save_project(
             data.get("project"), data.get("source"), data.get("data", {}),
-            data.get("resource_refs"), data.get("folder", "wardrobe"),
+            data.get("resource_refs"), data.get("folder", "wardrobe"), data.get("path"),
         )
         return web.json_response({"status": "success", "project": document})
     except ValueError as e:

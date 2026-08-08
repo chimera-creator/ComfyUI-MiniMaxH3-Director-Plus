@@ -1,9 +1,9 @@
 """Shared project persistence for the MiniMax H3 Director Plus nodes.
 
-Projects intentionally live beside the nodes in ``Projects/<project>/wardrobe`` so a
-workflow can be moved with the custom node directory.  The JSON document is
-source-oriented: each node contributes a named source and later saves merge
-into the same project instead of replacing the other node data.
+Projects default to ``Projects/<project>/wardrobe`` beside the nodes, but the Project
+node can select any local project folder. The JSON document is source-oriented: each
+node contributes a named source and later saves merge into the same project instead of
+replacing the other node data.
 """
 
 from __future__ import annotations
@@ -45,17 +45,24 @@ def normalise_project_name(value: str) -> str:
     return value[:100]
 
 
-def _project_dir(project_name: str) -> str:
-    safe_name = normalise_project_name(project_name)
-    path = os.path.abspath(os.path.join(PROJECTS_DIR, safe_name))
-    root = os.path.abspath(PROJECTS_DIR)
-    if os.path.commonpath([root, path]) != root:
-        raise ValueError("Invalid project path.")
+def normalise_project_path(value: str | None) -> str:
+    """Return an absolute project-folder path, defaulting to the bundled Projects folder."""
+    raw = str(value or "").strip()
+    path = os.path.abspath(os.path.expanduser(raw or PROJECTS_DIR))
+    if not os.path.isabs(path):
+        raise ValueError("Project path must be absolute.")
     return path
 
 
-def _project_file(project_name: str) -> str:
-    return os.path.join(_project_dir(project_name), "wardrobe", "project.json")
+def _project_dir(project_name: str, project_path: str | None = None) -> str:
+    if project_path:
+        return normalise_project_path(project_path)
+    safe_name = normalise_project_name(project_name)
+    return os.path.abspath(os.path.join(PROJECTS_DIR, safe_name))
+
+
+def _project_file(project_name: str, project_path: str | None = None) -> str:
+    return os.path.join(_project_dir(project_name, project_path), "wardrobe", "project.json")
 
 
 def _normalise_folder(value: str) -> str:
@@ -76,9 +83,9 @@ def _empty_document(project_name: str) -> dict:
     }
 
 
-def load_project(project_name: str) -> dict | None:
+def load_project(project_name: str, project_path: str | None = None) -> dict | None:
     try:
-        path = _project_file(project_name)
+        path = _project_file(project_name, project_path)
     except ValueError:
         raise
     if not os.path.isfile(path):
@@ -89,23 +96,43 @@ def load_project(project_name: str) -> dict | None:
         raise ValueError("Project file is not a JSON object.")
     document.setdefault("schema_version", PROJECT_SCHEMA_VERSION)
     document.setdefault("project_name", normalise_project_name(project_name))
+    document.setdefault("project_path", os.path.abspath(os.path.dirname(os.path.dirname(path))))
     document.setdefault("sources", {})
     document.setdefault("resources", [])
     return document
 
 
-def ensure_project(project_name: str) -> dict:
+def load_project_at_path(project_path: str) -> dict | None:
+    """Load a project selected by its folder path, without requiring its name first."""
+    path = normalise_project_path(project_path)
+    project_file = os.path.join(path, "wardrobe", "project.json")
+    if not os.path.isfile(project_file):
+        return None
+    with open(project_file, "r", encoding="utf-8") as handle:
+        document = json.load(handle)
+    if not isinstance(document, dict) or not document.get("project_name"):
+        raise ValueError("Project file is not a valid project document.")
+    document.setdefault("schema_version", PROJECT_SCHEMA_VERSION)
+    document.setdefault("sources", {})
+    document.setdefault("resources", [])
+    document["project_path"] = path
+    return document
+
+
+def ensure_project(project_name: str, project_path: str | None = None) -> dict:
     """Create a project index if needed and return its document."""
     safe_name = normalise_project_name(project_name)
-    document = load_project(safe_name)
+    selected_path = normalise_project_path(project_path) if project_path else None
+    document = load_project_at_path(selected_path) if selected_path else load_project(safe_name)
     if document is not None:
         return document
-    project_dir = _project_dir(safe_name)
+    project_dir = _project_dir(safe_name, selected_path)
     os.makedirs(os.path.join(project_dir, "wardrobe"), exist_ok=True)
     os.makedirs(os.path.join(project_dir, "sets"), exist_ok=True)
     document = _empty_document(safe_name)
-    _write_json_atomic(_project_file(safe_name), document,
-                       os.path.dirname(_project_file(safe_name)))
+    document["project_path"] = project_dir
+    project_file = _project_file(safe_name, selected_path)
+    _write_json_atomic(project_file, document, os.path.dirname(project_file))
     return document
 
 
@@ -134,17 +161,19 @@ def project_source_data(value, source: str):
     return saved
 
 
-def list_projects() -> list[dict]:
-    if not os.path.isdir(PROJECTS_DIR):
+def list_projects(project_path: str | None = None) -> list[dict]:
+    root = normalise_project_path(project_path)
+    if not os.path.isdir(root):
         return []
     projects = []
-    for entry in os.scandir(PROJECTS_DIR):
+    for entry in os.scandir(root):
         if not entry.is_dir() or not os.path.isfile(os.path.join(entry.path, "wardrobe", "project.json")):
             continue
         try:
-            document = load_project(entry.name) or {}
+            document = load_project(entry.name, root) or {}
             projects.append({
                 "name": document.get("project_name", entry.name),
+                "path": document.get("project_path", entry.path),
                 "updated_at": document.get("updated_at", ""),
                 "resource_count": len(document.get("resources", []) or []),
                 "sources": sorted((document.get("sources") or {}).keys()),
@@ -247,7 +276,7 @@ def _write_json_atomic(path: str, document: dict, directory: str):
 
 
 def save_project(project_name: str, source: str, data, resource_refs=None,
-                 folder="wardrobe") -> dict:
+                 folder="wardrobe", project_path: str | None = None) -> dict:
     safe_name = normalise_project_name(project_name)
     folder = _normalise_folder(folder)
     source = str(source or "").strip().lower()
@@ -256,12 +285,13 @@ def save_project(project_name: str, source: str, data, resource_refs=None,
     if not isinstance(data, dict):
         raise ValueError("Project source data must be an object.")
 
-    project_dir = _project_dir(safe_name)
+    project_dir = _project_dir(safe_name, project_path)
     folder_dir = os.path.join(project_dir, folder)
     os.makedirs(folder_dir, exist_ok=True)
-    document = load_project(safe_name) or _empty_document(safe_name)
+    document = load_project(safe_name, project_dir) or _empty_document(safe_name)
     document["schema_version"] = PROJECT_SCHEMA_VERSION
     document["project_name"] = safe_name
+    document["project_path"] = project_dir
     document.setdefault("sources", {})[source] = data
 
     references = list(resource_refs or []) + collect_resource_refs(data)
@@ -273,9 +303,9 @@ def save_project(project_name: str, source: str, data, resource_refs=None,
     document["resources"] = sorted(existing.values(), key=lambda item: item["original"])
     document["updated_at"] = _timestamp()
 
-    project_path = _project_file(safe_name)
-    os.makedirs(os.path.dirname(project_path), exist_ok=True)
-    _write_json_atomic(project_path, document, os.path.dirname(project_path))
+    project_file = _project_file(safe_name, project_dir)
+    os.makedirs(os.path.dirname(project_file), exist_ok=True)
+    _write_json_atomic(project_file, document, os.path.dirname(project_file))
     _write_json_atomic(
         os.path.join(folder_dir, "%s.json" % source),
         {

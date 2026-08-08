@@ -1,10 +1,11 @@
 """Shared project selector for MiniMax H3 Director Plus workflows."""
 
 import json
+import os
 
 from comfy_api.latest import io
 
-from .minimax_projects import ensure_project, normalise_project_name
+from .minimax_projects import ensure_project, load_project_at_path, normalise_project_name
 
 
 class MiniMaxH3DirectorProject(io.ComfyNode):
@@ -26,6 +27,10 @@ class MiniMaxH3DirectorProject(io.ComfyNode):
                     "project_name", default="", optional=True,
                     tooltip="Project name selected by the project editor.",
                 ),
+                io.String.Input(
+                    "project_path", default="", optional=True,
+                    tooltip="Optional absolute folder selected by Browse. The project index is saved and loaded there.",
+                ),
             ],
             outputs=[
                 io.String.Output(
@@ -36,16 +41,21 @@ class MiniMaxH3DirectorProject(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, project_name="") -> io.NodeOutput:
+    def execute(cls, project_name="", project_path="") -> io.NodeOutput:
         name = str(project_name or "").strip()
+        path = str(project_path or "").strip()
+        if not name and path:
+            existing = load_project_at_path(path)
+            name = str(existing.get("project_name") if existing else os.path.basename(os.path.normpath(path))).strip()
         if not name:
             return io.NodeOutput(json.dumps({
                 "version": 1,
                 "project_name": "",
+                "project_path": path,
                 "sources": {},
                 "resources": [],
             }, separators=(",", ":")))
-        document = ensure_project(normalise_project_name(name))
+        document = ensure_project(normalise_project_name(name), path or None)
         return io.NodeOutput(json.dumps(document, separators=(",", ":")))
 
 
