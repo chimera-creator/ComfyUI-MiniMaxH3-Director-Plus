@@ -107,7 +107,7 @@ class MiniMaxH3DirectorChain(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="MiniMaxH3DirectorChainCS",
-            display_name="MiniMax H3 Director Chain",
+            display_name="MiniMax H3 Director Chain Plus",
             category="MiniMax H3",
             description=(
                 "Renders a timeline longer than one H3 shot by chaining in-range windows, "
@@ -329,4 +329,4 @@ class MiniMaxH3DirectorChain(io.ComfyNode):
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3DirectorChainCS": MiniMaxH3DirectorChain}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorChainCS": "MiniMax H3 Director Chain"}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorChainCS": "MiniMax H3 Director Chain Plus"}

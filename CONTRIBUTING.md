@@ -26,7 +26,7 @@ your working tree is what runs — nothing is copied or built.
 
 ```
 cd ComfyUI/custom_nodes
-git clone https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director
+git clone https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director ComfyUI-MiniMaxH3-Director-Plus
 ```
 
 Where things are:

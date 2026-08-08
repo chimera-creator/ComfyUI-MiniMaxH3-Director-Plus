@@ -143,6 +143,13 @@ def resolve_window(tdata, fps, start_frame, duration_frames,
                 "here as 0." % float(duration))
         duration_frames = max(1, int(round(float(duration) * fps)))
 
+    max_window_frames = max(1, int(plan.TRAINED_MAX_GRID_SECONDS * fps + 1e-9))
+    if duration_frames > max_window_frames:
+        log.warning("[MiniMaxDirector] Render window %.2fs exceeds H3's maximum valid "
+                    "duration %.3fs; clamping it.",
+                    duration_frames / fps, plan.TRAINED_MAX_GRID_SECONDS)
+        duration_frames = max_window_frames
+
     retake = plan.retake_state(tdata)
     if retake:
         # the marked range replaces the panel window entirely
@@ -216,7 +223,7 @@ class MiniMaxH3Director(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="MiniMaxH3DirectorCS",
-            display_name="MiniMax H3 Director",
+            display_name="MiniMax H3 Director Plus",
             category="MiniMax H3",
             description=(
                 "Visual timeline for MiniMax H3. Segments become a storyboard prompt with "
@@ -251,8 +258,10 @@ class MiniMaxH3Director(io.ComfyNode):
                                tooltip="Start of the render window, in seconds."),
                 io.Float.Input("end_second", default=5.0, min=0.0, max=1000.0, step=0.01,
                                tooltip="End of the render window, in seconds."),
-                io.Float.Input("duration_seconds", default=5.0, min=0.1, max=1000.0, step=0.01,
-                               tooltip="Render length in seconds. Snapped up to H3's 17k+5 frame grid at 24 fps."),
+                io.Float.Input("duration_seconds", default=5.0, min=0.1,
+                               max=plan.TRAINED_MAX_GRID_SECONDS, step=0.01,
+                               tooltip="Render length in seconds. H3's maximum valid grid duration is "
+                                       "%.3fs at 24 fps." % plan.TRAINED_MAX_GRID_SECONDS),
                 io.Int.Input("start_frame", default=0, min=0, max=10000, step=1,
                              tooltip="Start of the render window, in timeline frames."),
                 io.Int.Input("end_frame", default=120, min=1, max=10000, step=1,
@@ -308,6 +317,7 @@ class MiniMaxH3Director(io.ComfyNode):
                 io.Float.Input("end", force_input=True, optional=True, default=0.0,
                                tooltip="Automation (connection-only). Window end in SECONDS."),
                 io.Float.Input("duration", force_input=True, optional=True, default=0.0,
+                               max=plan.TRAINED_MAX_GRID_SECONDS,
                                tooltip="Automation (connection-only). Render length in SECONDS."),
             ],
             outputs=[
@@ -573,4 +583,4 @@ class MiniMaxH3Director(io.ComfyNode):
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3DirectorCS": MiniMaxH3Director}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorCS": "MiniMax H3 Director"}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorCS": "MiniMax H3 Director Plus"}

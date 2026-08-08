@@ -1,4 +1,4 @@
-# ComfyUI MiniMax H3 Director
+# ComfyUI MiniMax H3 Director Plus
 
 **A timeline editor for [MiniMax H3](https://huggingface.co/Comfy-Org/MiniMax-H3) inside ComfyUI.**
 Drag images, videos and music onto tracks, trim them on a ruler, write a prompt per shot,
@@ -9,7 +9,7 @@ see the exact prompt the model will receive while you are still editing it.
 [![ComfyUI](https://img.shields.io/badge/ComfyUI-%E2%89%A5%200.30.0-1a1a1a)](https://github.com/comfyanonymous/ComfyUI)
 [![version](https://img.shields.io/badge/version-0.1.5-brightgreen)](CHANGELOG.md)
 
-![The MiniMax H3 Director node](docs/images/director-node.png)
+![The MiniMax H3 Director Plus node](docs/images/director-node.png)
 
 <!-- TODO: demo video -->
 
@@ -88,10 +88,10 @@ Four nodes, category **MiniMax H3**:
 
 | Node | What it does |
 |---|---|
-| **MiniMax H3 Director** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
-| **MiniMax H3 Preview Override** | Watch the whole shot denoise, not a single frozen frame. |
-| **MiniMax H3 Retake Stitch** | Splices a regenerated range back into the base video. |
-| **MiniMax H3 Enhance Prompt** | A local vision model writes the prompt from your reference images. |
+| **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
+| **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
+| **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
+| **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
 
 Editing features carried over from LTX Director: main track, reference-video track, audio
 track, ruler in seconds or frames, drag / resize / copy / paste, prompt zones per segment,
@@ -116,7 +116,7 @@ any OpenAI-compatible endpoint) with automatic VRAM release before a run.
 ### Via ComfyUI Manager (recommended)
 
 1. Open **Manager → Custom Nodes Manager**
-2. Search for **MiniMax H3 Director**
+2. Search for **MiniMax H3 Director Plus**
 3. **Install**, then restart ComfyUI and reload the browser tab.
 
 Not listed yet? Use **Manager → Install via Git URL** and paste:
@@ -131,7 +131,7 @@ Clone into your `custom_nodes` folder and restart:
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director
+git clone https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director ComfyUI-MiniMaxH3-Director-Plus
 ```
 
 On the Windows portable build the folder is
@@ -146,7 +146,7 @@ report.
 ### Updating
 
 ```bash
-cd ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Director
+cd ComfyUI/custom_nodes/ComfyUI-MiniMaxH3-Director-Plus
 git pull
 ```
 
@@ -332,7 +332,7 @@ five-second shot is being sampled. KJNodes' Preview Override does the good versi
 this, but its video paths are gated on LTX checks and nothing there unpacks H3's packed AV
 latent, so on MiniMax it falls through to the same single frame.
 
-**MiniMax H3 Preview Override** goes between the Director's `model` output and the sampler
+**MiniMax H3 Preview Override Plus** goes between the Director's `model` output and the sampler
 and renders the whole shot as it denoises.
 
 <img src="docs/images/preview-override-node.png" alt="The Preview Override node" width="360">
@@ -379,7 +379,7 @@ the finished shot, thinning included.
 
 ## Writing the prompt for you
 
-**MiniMax H3 Enhance Prompt** hands your reference images and a one-line idea to a local
+**MiniMax H3 Enhance Prompt Plus** hands your reference images and a one-line idea to a local
 vision model and gets back prompt text shaped for H3. The same images come out of its
 `ref_images` output, so what the model described is exactly what H3 conditions on.
 
@@ -401,7 +401,10 @@ Sockets grow as you connect, up to nine, and close the gap again when you discon
 | `idea` | What you want, in plain words. |
 | `preset` | `global` writes scene, style, subjects and lighting and leaves the shots to your timeline. `storyboard` writes the whole shot sequence with timestamps — only for timelines whose segments carry no prompt text, or the two shot numberings collide. |
 | `system_prompt` | Overrides the built-in instructions, which follow MiniMax's own prompt-writing guide. |
-| `provider` / `base_url` / `model` | Ollama, LM Studio, or any OpenAI-compatible endpoint. `http://` is added if you leave it off; host and port only, no path. |
+| `provider` / `base_url` / `model` / `api_key` | Ollama, LM Studio, or any OpenAI-compatible endpoint. `api_key` is optional and is sent as a Bearer token only when set. `http://` is added if you leave the base URL off; host and port only, no path. |
+| `use_spicy_model` | Runs the first-pass prompt through a second model with a sensual/mature detail pass. Off by default. |
+| `spicy_model` | Second-pass model name. Empty reuses the primary model. |
+| `spicy_system_prompt` | Optional replacement for the built-in spicy second-pass instructions. |
 | `seed` | ComfyUI caches node outputs, so an unchanged input never re-asks the model. Change this to force a fresh answer. |
 | `max_words` | Caps the description. MiniMax's guide puts it at 350–500 words. |
 | `unload_after` | Frees the vision model's VRAM when done. Leave it on unless you are iterating. |
@@ -428,7 +431,7 @@ regenerates only that range, anchored on the base video's own frames either side
 The frame before the range becomes `first_frame`, the frame after becomes `last_frame` —
 exactly what H3's first/last anchors are for, so the new material meets the old on both cuts.
 
-Wire the Director's `retake_info` output into **MiniMax H3 Retake Stitch** together with
+Wire the Director's `retake_info` output into **MiniMax H3 Retake Stitch Plus** together with
 the decoded images (and audio) to get the full video back: base head + retake + base tail,
 video and audio, resampled to 24 fps. `keep_base_audio` keeps the original soundtrack
 across the whole thing instead of the generated one.

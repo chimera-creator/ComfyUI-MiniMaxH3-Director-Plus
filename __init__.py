@@ -30,10 +30,10 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3DirectorCS": "MiniMax H3 Director",
-    "MiniMaxH3PreviewOverrideCS": "MiniMax H3 Preview Override",
-    "MiniMaxH3RetakeStitchCS": "MiniMax H3 Retake Stitch",
-    "MiniMaxH3EnhancePromptCS": "MiniMax H3 Enhance Prompt",
+    "MiniMaxH3DirectorCS": "MiniMax H3 Director Plus",
+    "MiniMaxH3PreviewOverrideCS": "MiniMax H3 Preview Override Plus",
+    "MiniMaxH3RetakeStitchCS": "MiniMax H3 Retake Stitch Plus",
+    "MiniMaxH3EnhancePromptCS": "MiniMax H3 Enhance Prompt Plus",
 }
 
 WEB_DIRECTORY = "./js"

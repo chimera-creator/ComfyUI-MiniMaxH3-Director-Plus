@@ -32,6 +32,9 @@ REF_VIDEO_TOTAL_SEC = 15.0  # "total duration <= 15 seconds"
 # Output envelope: "4-15 seconds" at 24 fps
 TRAINED_MIN_FRAMES = 96
 TRAINED_MAX_FRAMES = 360
+# 360 frames is not on H3's 17k+5 grid; 345 is the last valid grid point below it.
+TRAINED_MAX_GRID_FRAMES = TRAINED_MAX_FRAMES - ((TRAINED_MAX_FRAMES - 5) % 17)
+TRAINED_MAX_GRID_SECONDS = TRAINED_MAX_GRID_FRAMES / MODEL_FPS
 
 ROLE_FIRST = "first"
 ROLE_LAST = "last"
@@ -346,6 +349,8 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         soundscape = tdata.get("overall_soundscape", "") or ""
     if not (music or "").strip():
         music = tdata.get("non_diegetic_music", "") or ""
+    subject_override = (tdata.get("subject_definitions", "") or "").strip()
+    retention_override = (tdata.get("retention_analysis", "") or "").strip()
 
     ref_mode_on = ref_mode_from(tdata)
     if prompt_format is None:
@@ -553,6 +558,8 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         # a named subject beats a bare picture label: it survives across cuts
         for slot, subject in subject_of_slot.items():
             char_tag_values[slot] = "<Subject %d>" % subject
+    if subject_override:
+        subject_lines = [subject_override]
 
     global_prompt = substitute_char_tags(global_prompt, char_tag_values)
     for shot in shots:
@@ -588,6 +595,8 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                     % ", ".join("<Audio %d>" % (i + 1) for i in range(len(ref_audio_segs))))
         if ref_notes:
             retention_lines.extend(n + "." for n in ref_notes)
+        if retention_override:
+            retention_lines = [retention_override]
         # Only the fl2va path: ref2va has no keyframe slot and its guide asks for no
         # instruction line. `written` mirrors the shot numbering the body will use.
         instruction = ""

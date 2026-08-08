@@ -9,6 +9,13 @@
 const { app } = window.comfyAPI.app;
 
 const RENAMED = {
+  MiniMaxH3DirectorCS: "MiniMax H3 Director Plus",
+  MiniMaxH3PreviewOverrideCS: "MiniMax H3 Preview Override Plus",
+  MiniMaxH3RetakeStitchCS: "MiniMax H3 Retake Stitch Plus",
+  MiniMaxH3DirectorChainCS: "MiniMax H3 Director Chain Plus",
+};
+
+const LEGACY_NAMES = {
   MiniMaxH3DirectorCS: "MiniMax H3 Director",
   MiniMaxH3PreviewOverrideCS: "MiniMax H3 Preview Override",
   MiniMaxH3RetakeStitchCS: "MiniMax H3 Retake Stitch",
@@ -17,8 +24,13 @@ const RENAMED = {
 
 function healTitle(node) {
   const current = RENAMED[node?.type];
+  const legacy = LEGACY_NAMES[node?.type];
   if (!current || !node.title) return;
-  if (node.title === current + " CS" || node.title === current + " -CS") {
+  if (
+    node.title === legacy ||
+    node.title === legacy + " CS" ||
+    node.title === legacy + " -CS"
+  ) {
     node.title = current;
     node.setDirtyCanvas?.(true, true);
   }

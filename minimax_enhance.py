@@ -181,6 +181,19 @@ No preamble, no commentary, no markdown, no quotation marks, no angle brackets. 
 then stop."""
 
 
+SYSTEM_SPICY = """You are the second-pass editor for a MiniMax-H3 video prompt.
+
+Rewrite the supplied first-pass prompt to add vivid, sensual, flirtatious and mature detail
+where it fits the visible subjects and requested scenario. Keep the result tasteful,
+consensual and adult. Preserve the original identities, setting, shot order, actions,
+camera language, timing, reference tags and overall intent. Do not invent minors, coercion,
+or unrelated events. Do not add section labels, markdown, commentary or explanations.
+
+Return only the revised prompt text. Preserve the final Audio: and Music: lines, keeping
+them as the last two lines in that order.
+"""
+
+
 def system_for(preset, max_words):
     """The preset's instructions with the user's actual word budget filled in.
 
@@ -360,7 +373,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="MiniMaxH3EnhancePromptCS",
-            display_name="MiniMax H3 Enhance Prompt",
+            display_name="MiniMax H3 Enhance Prompt Plus",
             category="MiniMax H3",
             description=(
                 "Turns a one-line idea plus reference images into a MiniMax-H3 prompt, "
@@ -409,6 +422,16 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                 tooltip="Model name. Must be a VISION model — a text-only model "
                                         "will ignore your images without saying so. Empty falls "
                                         "back to the provider default."),
+                io.String.Input("api_key", default="", optional=True,
+                                tooltip="Optional API key for LM Studio or Custom OpenAI-compatible "
+                                        "endpoints. Sent as a Bearer token only when present."),
+                io.Boolean.Input("use_spicy_model", default=False, optional=True,
+                                 tooltip="Run a second pass over the first prompt with a separate "
+                                         "model and the spicy system prompt."),
+                io.String.Input("spicy_model", default="", optional=True,
+                                tooltip="Second-pass model name. Empty reuses the primary model."),
+                io.String.Input("spicy_system_prompt", multiline=True, default="", optional=True,
+                                tooltip="Optional replacement for the built-in spicy system prompt."),
                 io.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF,
                              control_after_generate=True, optional=True,
                              tooltip="ComfyUI caches node outputs, so an unchanged input means "
@@ -450,7 +473,8 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
 
     @classmethod
     async def execute(cls, images=None, idea="", preset=PRESET_GLOBAL, system_prompt="",
-                      duration_seconds=5.0, provider="ollama", base_url="", model="",
+                      duration_seconds=5.0, provider="ollama", base_url="", model="", api_key="",
+                      use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
                       on_error="passthrough") -> io.NodeOutput:
         tensors = _collect(images)
@@ -475,6 +499,10 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         defaults = media._PROVIDER_DEFAULTS.get(provider, media._PROVIDER_DEFAULTS["ollama"])
         url = media.normalize_base_url(base_url, defaults["url"])
         model_name = model or defaults["model"]
+        api_key = str(api_key or "").strip()
+        use_spicy_model = bool(use_spicy_model)
+        spicy_model_name = str(spicy_model or "").strip() or model_name
+        spicy_system = (spicy_system_prompt or "").strip() or SYSTEM_SPICY
         system = (system_prompt or "").strip() or system_for(preset, max_words)
 
         user = (idea or "").strip() or "Describe what these images show as a video."
@@ -503,10 +531,32 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         try:
             raw = await media.vlm_generate(b64, user, provider, url, model_name,
                                            system_prompt=system, timeout=300,
-                                           max_tokens=cap, keep_alive=keep_alive)
+                                           max_tokens=cap, keep_alive=keep_alive,
+                                           api_key=api_key)
             prompt = clean_prompt(raw, preset, max_words=int(max_words))
             if not prompt:
                 raise media.VLMError("The model returned nothing usable.")
+
+            if use_spicy_model:
+                log.info("[MiniMaxEnhance] spicy second pass via %s (model '%s')...",
+                         provider, spicy_model_name)
+                spicy_user = (
+                    "Revise this first-pass MiniMax-H3 prompt according to your instructions. "
+                    "Return the complete revised prompt, not a summary:\n\n%s" % prompt)
+                try:
+                    spicy_raw = await media.vlm_generate(
+                        b64, spicy_user, provider, url, spicy_model_name,
+                        system_prompt=spicy_system, timeout=300,
+                        max_tokens=cap, keep_alive=keep_alive, api_key=api_key)
+                    spicy_prompt = clean_prompt(spicy_raw, preset, max_words=int(max_words))
+                    if not spicy_prompt:
+                        raise media.VLMError("The spicy model returned nothing usable.")
+                    prompt = spicy_prompt
+                except media.VLMError as e:
+                    if on_error == "fail":
+                        raise
+                    log.warning("[MiniMaxEnhance] spicy second pass unavailable: %s; "
+                                "keeping the first-pass prompt.", e)
 
             # Small models reliably drop the two closing lines after a long description --
             # qwen3.5:9b managed both in 0 of 4 measured runs. Asking again, on its own,
@@ -520,9 +570,10 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                          else ("Music" if has_audio else "Audio"))
                 try:
                     tail = await media.vlm_generate(
-                        [], prompt, provider, url, model_name,
+                        [], prompt, provider, url,
+                        spicy_model_name if use_spicy_model else model_name,
                         system_prompt=SYSTEM_AUDIO_ONLY, timeout=120, max_tokens=300,
-                        keep_alive=keep_alive)
+                        keep_alive=keep_alive, api_key=api_key)
                     merged = clean_prompt("%s\n%s" % (prompt, tail), preset)
                     if re.search(r"^\s*(?:audio|sound|sfx)\s*:", merged, re.I | re.M):
                         prompt = merged
@@ -544,10 +595,12 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
             # that is exactly when a model is left sitting in VRAM.
             if unload_after:
                 await media.unload_model(provider, url, model_name)
+                if use_spicy_model and spicy_model_name != model_name:
+                    await media.unload_model(provider, url, spicy_model_name)
 
         log.info("[MiniMaxEnhance] %d chars:\n%s", len(prompt), prompt)
         return io.NodeOutput(prompt, batched, float(duration_seconds))
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3EnhancePromptCS": MiniMaxH3EnhancePrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3EnhancePromptCS": "MiniMax H3 Enhance Prompt"}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3EnhancePromptCS": "MiniMax H3 Enhance Prompt Plus"}

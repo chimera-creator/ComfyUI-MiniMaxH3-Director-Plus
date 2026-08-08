@@ -397,7 +397,8 @@ def strip_thinking(text):
 
 
 async def vlm_generate(images_b64, prompt, provider, base_url, model,
-                       system_prompt=None, timeout=120, keep_alive=0, max_tokens=None):
+                       system_prompt=None, timeout=120, keep_alive=0,
+                       max_tokens=None, api_key=None):
     """One vision-model round-trip, shared by the Analyze endpoint and the Enhance node.
 
     Kept provider-shaped rather than generic on purpose: Ollama takes raw base64 in an
@@ -448,8 +449,12 @@ async def vlm_generate(images_b64, prompt, provider, base_url, model,
                 payload = {"model": model, "messages": messages,
                            "max_tokens": int(max_tokens) if max_tokens else 2048,
                            "stream": False}
-                async with session.post("%s/v1/chat/completions" % base_url, json=payload,
-                                        timeout=timeout) as response:
+                request_kwargs = {"json": payload, "timeout": timeout}
+                api_key = str(api_key or "").strip()
+                if api_key:
+                    request_kwargs["headers"] = {"Authorization": "Bearer %s" % api_key}
+                async with session.post("%s/v1/chat/completions" % base_url,
+                                        **request_kwargs) as response:
                     if response.status != 200:
                         raise VLMError("%s HTTP %s: %s" % (provider, response.status, await response.text()))
                     resp_json = await response.json()
@@ -484,6 +489,7 @@ async def analyze_character_endpoint(request):
         data = await request.json()
         image_b64 = data.get("image_b64", "")
         char_index = int(data.get("char_index", 0))
+        api_key = str(data.get("api_key") or "").strip()
         provider, base_url, model_name = _resolve_provider(data)
 
         if provider == "off":
@@ -500,7 +506,7 @@ async def analyze_character_endpoint(request):
                  char_index + 1, provider, base_url, model_name)
         try:
             generated_text = await vlm_generate(cleaned, _ANALYZE_PROMPT, provider,
-                                                base_url, model_name)
+                                                base_url, model_name, api_key=api_key)
         except VLMError as e:
             return web.json_response({"status": "error", "message": str(e)})
 

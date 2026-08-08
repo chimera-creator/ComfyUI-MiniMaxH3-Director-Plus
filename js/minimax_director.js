@@ -26,13 +26,17 @@ const MOTION_TRACK_HEIGHT = 80; // used as the Reference Video track height
 const CANVAS_HEIGHT = RULER_HEIGHT + BLOCK_HEIGHT + MOTION_TRACK_HEIGHT + AUDIO_TRACK_HEIGHT;
 const HANDLE_HIT_PX = 14;
 const MIN_SEGMENT_LENGTH = 6;
-// The overall_soundscape / non_diegetic_music strip is docked inside the global prompt
-// box, so the box has to be tall enough for both. MUST match .mmxd-sound-row's height in
+// H3's last valid frame-grid point below its nominal 15s trained ceiling.
+const H3_SAFE_MAX_DURATION_SECONDS = 345 / 24;
+const H3_SAFE_MAX_DURATION_UI_SECONDS = Math.floor(H3_SAFE_MAX_DURATION_SECONDS * 100) / 100;
+// The guide section strips are docked inside the global prompt box, so the box has to be
+// tall enough for both rows. MUST match the row heights in the stylesheet â€” the CSS
 // the stylesheet — the CSS shortens the textarea by exactly this much, and if the two
 // disagree the prompt area either overlaps the strip or leaves a gap.
 const SOUND_ROW_HEIGHT = 54;
+const GUIDE_ROW_HEIGHT = 54;
 const GLOBAL_PROMPT_MIN_H = 60;                                    // the prompt box alone
-const GLOBAL_PROP_MIN_H = GLOBAL_PROMPT_MIN_H + SOUND_ROW_HEIGHT;  // prompt box + strip
+const GLOBAL_PROP_MIN_H = GLOBAL_PROMPT_MIN_H + GUIDE_ROW_HEIGHT + SOUND_ROW_HEIGHT;
 const MAX_THUMBNAIL_DIM = 512; // Increased to maintain quality for taller images
 
 const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
@@ -689,7 +693,8 @@ const STYLES = `
      the prompt area above it is shortened by exactly the same amount. Nothing here
      changes the node's height: the container keeps whatever the user resized it to. */
   .mmxd-sound-row { position: absolute; bottom: 0; left: 0; width: 100%; height: 54px; display: flex; gap: 6px; padding: 0 8px 6px 8px; box-sizing: border-box; }
-  .mmxd-prompt-area.mmxd-has-sound { height: calc(100% - 20px - 54px); }
+  .mmxd-guide-row { bottom: 54px; }
+  .mmxd-prompt-area.mmxd-has-sound { height: calc(100% - 20px - 54px - 54px); }
   .mmxd-sound-field { position: relative; flex: 1 1 0; min-width: 0; background: #1c1c1c; border: 1px solid #111; border-radius: 4px; box-sizing: border-box; }
   .mmxd-sound-field.focus-active { border-color: #888; }
   .mmxd-sound-label { position: absolute; top: 3px; left: 6px; font-size: 8px; font-weight: bold; color: #5a5a5a; text-transform: uppercase; letter-spacing: 0.5px; pointer-events: none; user-select: none; z-index: 5; }
@@ -825,11 +830,13 @@ function parseInitial(jsonStr) {
     // does not change what the room sounds like.
     overall_soundscape: "",
     non_diegetic_music: "",
+    subject_definitions: "",
+    retention_analysis: "",
     mainTrackEnabled: true,
     audioTrackEnabled: true,
     motionTrackEnabled: true,
     propHeight: 90,
-    globalPropHeight: 114,   // GLOBAL_PROP_MIN_H: prompt box + the sound strip
+    globalPropHeight: 168,   // GLOBAL_PROP_MIN_H: prompt box + guide overrides + sound strip
     showFilenames: true,
     overrideAudio: false,
     inpaint_audio: true,
@@ -846,6 +853,7 @@ function parseInitial(jsonStr) {
     analyzeProvider: "ollama",
     analyzeBaseUrl: "",
     analyzeModel: "",
+    analyzeApiKey: "",
     characters: [
       { images: [], description: "" },
       { images: [], description: "" },
@@ -859,6 +867,8 @@ function parseInitial(jsonStr) {
       if (p.retake_global_prompt !== undefined) parsed.retake_global_prompt = p.retake_global_prompt;
       if (p.overall_soundscape !== undefined) parsed.overall_soundscape = p.overall_soundscape;
       if (p.non_diegetic_music !== undefined) parsed.non_diegetic_music = p.non_diegetic_music;
+      if (p.subject_definitions !== undefined) parsed.subject_definitions = p.subject_definitions;
+      if (p.retention_analysis !== undefined) parsed.retention_analysis = p.retention_analysis;
       if (p.mainTrackEnabled !== undefined) parsed.mainTrackEnabled = p.mainTrackEnabled;
       if (p.audioTrackEnabled !== undefined) parsed.audioTrackEnabled = p.audioTrackEnabled;
       if (p.motionTrackEnabled !== undefined) parsed.motionTrackEnabled = p.motionTrackEnabled;
@@ -884,6 +894,7 @@ function parseInitial(jsonStr) {
       if (p.analyzeProvider !== undefined) parsed.analyzeProvider = p.analyzeProvider;
       if (p.analyzeBaseUrl !== undefined) parsed.analyzeBaseUrl = p.analyzeBaseUrl;
       if (p.analyzeModel !== undefined) parsed.analyzeModel = p.analyzeModel;
+      if (p.analyzeApiKey !== undefined) parsed.analyzeApiKey = p.analyzeApiKey;
       if (Array.isArray(p.characters)) {
         parsed.characters = p.characters.map(c => ({
           images: Array.isArray(c.images) ? c.images : [],
@@ -2995,8 +3006,10 @@ class TimelineEditor {
     // copy to keep in step. Issue #7.
     const soundRow = document.createElement("div");
     soundRow.className = "mmxd-sound-row";
+    const guideRow = document.createElement("div");
+    guideRow.className = "mmxd-sound-row mmxd-guide-row";
 
-    const makeSoundField = (label, key, placeholder) => {
+    const makeSoundField = (row, label, key, placeholder) => {
       const field = document.createElement("div");
       field.className = "mmxd-sound-field";
 
@@ -3030,7 +3043,7 @@ class TimelineEditor {
         saveTimeout = setTimeout(triggerAutoSave, 300);
       });
 
-      soundRow.appendChild(field);
+      row.appendChild(field);
       return area;
     };
 
@@ -3056,12 +3069,19 @@ class TimelineEditor {
 
     // built here rather than above, so the two fields share the global prompt's autosave
     // debounce instead of declaring a second one
+    this.subjectDefinitionsInput = makeSoundField(
+      guideRow, "subject_definitions", "subject_definitions",
+      "Optional override for the character/reference bindings, e.g. <Subject 1> is the character shown in <Picture 1>.");
+    this.retentionAnalysisInput = makeSoundField(
+      guideRow, "retention_analysis", "retention_analysis",
+      "Optional identity/style continuity rules, e.g. Keep <Subject 1> consistent across every shot.");
     this.soundscapeInput = makeSoundField(
-      "overall_soundscape", "overall_soundscape",
+      soundRow, "overall_soundscape", "overall_soundscape",
       "Ambience and physical sound across the whole video. Dialogue and shot-synced effects belong in the prompt above.");
     this.musicInput = makeSoundField(
-      "non_diegetic_music", "non_diegetic_music",
+      soundRow, "non_diegetic_music", "non_diegetic_music",
       "Score only the audience hears. Name instrumentation, tempo and dynamics, or write N/A.");
+    globalPromptWrapper.appendChild(guideRow);
     globalPromptWrapper.appendChild(soundRow);
 
     this.globalPromptInput.addEventListener("input", (e) => {
@@ -5888,6 +5908,14 @@ class TimelineEditor {
     if (this.musicInput) {
       const m = this.timeline.non_diegetic_music || "";
       if (this.musicInput.value !== m) this.musicInput.value = m;
+    }
+    if (this.subjectDefinitionsInput) {
+      const s = this.timeline.subject_definitions || "";
+      if (this.subjectDefinitionsInput.value !== s) this.subjectDefinitionsInput.value = s;
+    }
+    if (this.retentionAnalysisInput) {
+      const r = this.timeline.retention_analysis || "";
+      if (this.retentionAnalysisInput.value !== r) this.retentionAnalysisInput.value = r;
     }
 
     // 1. Set track heights
@@ -9441,16 +9469,23 @@ class TimelineEditor {
     )).filter(Boolean);
 
     try {
+      const analyzeProvider = this.timeline.analyzeProvider || "ollama";
+      const analyzeBody = {
+        clip_name: clip_name,
+        image_b64: b64_images,
+        char_index: idx,
+        provider: analyzeProvider,
+        base_url: this.timeline.analyzeBaseUrl || "",
+        model: this.timeline.analyzeModel || "",
+      };
+      const analyzeApiKey = String(this.timeline.analyzeApiKey || "").trim();
+      if (analyzeApiKey && (analyzeProvider === "lmstudio" || analyzeProvider === "custom")) {
+        analyzeBody.api_key = analyzeApiKey;
+      }
+
       const resp = await api.fetchApi("/minimax_director/analyze_character", {
         method: "POST",
-        body: JSON.stringify({
-          clip_name: clip_name,
-          image_b64: b64_images,
-          char_index: idx,
-          provider: this.timeline.analyzeProvider || "ollama",
-          base_url: this.timeline.analyzeBaseUrl || "",
-          model: this.timeline.analyzeModel || "",
-        })
+        body: JSON.stringify(analyzeBody)
       });
       const result = await resp.json();
       if (result.status === "success") {
@@ -9711,6 +9746,8 @@ class TimelineEditor {
       // this object is an allowlist: a key missing here is dropped on the next commit
       overall_soundscape: this.soundscapeInput ? this.soundscapeInput.value : (this.timeline.overall_soundscape || ""),
       non_diegetic_music: this.musicInput ? this.musicInput.value : (this.timeline.non_diegetic_music || ""),
+      subject_definitions: this.subjectDefinitionsInput ? this.subjectDefinitionsInput.value : (this.timeline.subject_definitions || ""),
+      retention_analysis: this.retentionAnalysisInput ? this.retentionAnalysisInput.value : (this.timeline.retention_analysis || ""),
       retakeMode: this.retakeMode,
       retakeStart: this.timeline.retakeStart,
       retakeLength: this.timeline.retakeLength,
@@ -9729,6 +9766,7 @@ class TimelineEditor {
       analyzeProvider: this.timeline.analyzeProvider || "ollama",
       analyzeBaseUrl: this.timeline.analyzeBaseUrl || "",
       analyzeModel: this.timeline.analyzeModel || "",
+      analyzeApiKey: this.timeline.analyzeApiKey || "",
       characters: (this.timeline.characters || []).map(c => ({
         images: (c.images || []).map(img => img.b64 ? { b64: img.b64, name: img.name } : { name: img.name }),
         description: c.description || ""
@@ -11227,6 +11265,9 @@ class TimelineEditor {
         analyzeProvider: this.timeline.analyzeProvider || "ollama",
         analyzeBaseUrl: this.timeline.analyzeBaseUrl || "",
         analyzeModel: this.timeline.analyzeModel || "",
+        analyzeApiKey: this.timeline.analyzeApiKey || "",
+        subject_definitions: this.timeline.subject_definitions || "",
+        retention_analysis: this.timeline.retention_analysis || "",
         characters: (this.timeline.characters || []).map(c => ({
           images: (c.images || []).map(img => img.b64 ? { b64: img.b64, name: img.name } : { name: img.name }),
           description: c.description || ""
@@ -11768,6 +11809,7 @@ class TimelineEditor {
     if (!this.timeline.analyzeProvider) this.timeline.analyzeProvider = "ollama";
     if (this.timeline.analyzeBaseUrl === undefined) this.timeline.analyzeBaseUrl = "";
     if (this.timeline.analyzeModel === undefined) this.timeline.analyzeModel = "";
+    if (this.timeline.analyzeApiKey === undefined) this.timeline.analyzeApiKey = "";
 
     const provSelect = document.createElement("select");
     provSelect.className = "mmxd-settings-select";
@@ -11796,8 +11838,16 @@ class TimelineEditor {
     modelInput.style.width = "150px";
     modelInput.style.textAlign = "left";
 
+    const apiKeyInput = document.createElement("input");
+    apiKeyInput.type = "password";
+    apiKeyInput.className = "mmxd-settings-input";
+    apiKeyInput.style.width = "150px";
+    apiKeyInput.style.textAlign = "left";
+    apiKeyInput.autocomplete = "off";
+
     const urlRow = this._makeSettingRow("Base URL", urlInput);
     const modelRow = this._makeSettingRow("Model", modelInput);
+    const apiKeyRow = this._makeSettingRow("API Key (optional)", apiKeyInput);
 
     const refreshProviderRows = () => {
       const prov = this.timeline.analyzeProvider || "ollama";
@@ -11806,9 +11856,12 @@ class TimelineEditor {
       modelInput.placeholder = defs.model || "your-loaded-model-name";
       urlInput.value = this.timeline.analyzeBaseUrl || "";
       modelInput.value = this.timeline.analyzeModel || "";
+      apiKeyInput.value = this.timeline.analyzeApiKey || "";
       const isOff = (prov === "off");
+      const isOpenAICompatible = (prov === "lmstudio" || prov === "custom");
       urlRow.style.display = isOff ? "none" : "";
       modelRow.style.display = isOff ? "none" : "";
+      apiKeyRow.style.display = isOpenAICompatible ? "" : "none";
     };
 
     provSelect.addEventListener("change", (e) => {
@@ -11827,10 +11880,15 @@ class TimelineEditor {
       this.timeline.analyzeModel = modelInput.value.trim();
       this.commitChanges(true);
     });
+    apiKeyInput.addEventListener("change", () => {
+      this.timeline.analyzeApiKey = apiKeyInput.value.trim();
+      this.commitChanges(true);
+    });
 
     menu.appendChild(this._makeSettingRow("Provider", provSelect));
     menu.appendChild(urlRow);
     menu.appendChild(modelRow);
+    menu.appendChild(apiKeyRow);
 
     const provNote = document.createElement("div");
     provNote.style.fontSize = "9px";
@@ -12613,6 +12671,20 @@ app.registerExtension({
           // Larger canvases work but cost time and leave the trained envelope.
           const RES = [
             { label: "Custom", w: 0, h: 0 },
+            { label: "0.2 MP — 16:9 — 608×352", w: 608, h: 352 },
+            { label: "0.3 MP — 16:9 — 736×416", w: 736, h: 416 },
+            { label: "0.4 MP — 16:9 — 864×480", w: 864, h: 480 },
+            { label: "0.5 MP — 16:9 — 960×544", w: 960, h: 544 },
+            { label: "0.6 MP — 16:9 — 1056×608", w: 1056, h: 608 },
+            { label: "0.7 MP — 16:9 — 1152×640", w: 1152, h: 640 },
+            { label: "0.8 MP — 16:9 — 1216×672", w: 1216, h: 672 },
+            { label: "0.9 MP — 16:9 — 1280×736", w: 1280, h: 736 },
+            { label: "0.98 MP — 16:9 — 1344×768", w: 1344, h: 768 },
+            { label: "1.0 MP — 16:9 — 1376×768", w: 1376, h: 768 },
+            { label: "1.2 MP — 16:9 — 1504×832", w: 1504, h: 832 },
+            { label: "1.5 MP — 16:9 — 1664×928", w: 1664, h: 928 },
+            { label: "1.8 MP — 16:9 — 1824×1024", w: 1824, h: 1024 },
+            { label: "2.0 MP — 16:9 — 1920×1088", w: 1920, h: 1088 },
             { label: "16:9 native \u2014 1344\u00d7768", w: 1344, h: 768 },
             { label: "9:16 native \u2014 768\u00d71344", w: 768, h: 1344 },
             { label: "1:1 native \u2014 992\u00d7992", w: 992, h: 992 },
@@ -12689,7 +12761,7 @@ app.registerExtension({
             hideTimingWidgets();
           };
           const timeRefreshers = [];
-          const mkTimeRow = (parentCol, labelText, secName, frmName, minSec, minFrm) => {
+          const mkTimeRow = (parentCol, labelText, secName, frmName, minSec, minFrm, options = {}) => {
             const row = document.createElement("div");
             Object.assign(row.style, { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px", minHeight: "20px" });
             const labWrap = document.createElement("div");
@@ -12698,24 +12770,73 @@ app.registerExtension({
             Object.assign(lab.style, { color: "#9a9a9a", fontSize: "11px" });
             const unit = document.createElement("span"); Object.assign(unit.style, { color: "#666", fontSize: "9px" });
             labWrap.appendChild(lab); labWrap.appendChild(unit);
-            const input = document.createElement("input"); input.type = "number"; sIn(input, "86px");
-            row.appendChild(labWrap); row.appendChild(input); parentCol.appendChild(row);
+            const isSlider = !!options.slider;
+            const input = document.createElement("input");
+            input.type = isSlider ? "range" : "number";
+            if (isSlider) {
+              Object.assign(input.style, { flex: "1", minWidth: "72px", accentColor: "#4fff8f" });
+            } else {
+              sIn(input, "86px");
+            }
+            const valueReadout = isSlider ? document.createElement("span") : null;
+            if (valueReadout) {
+              Object.assign(valueReadout.style, { color: "#bdbdbd", fontSize: "10px", minWidth: "52px", textAlign: "right" });
+            }
+            row.appendChild(labWrap); row.appendChild(input);
+            if (valueReadout) row.appendChild(valueReadout);
+            parentCol.appendChild(row);
+            const maxForMode = (mode) => {
+              if (!options.maxValue) return null;
+              return typeof options.maxValue === "function"
+                ? options.maxValue(mode)
+                : options.maxValue[mode];
+            };
             const refresh = () => {
-              if (timeMode() === "frames") { const w = getW(frmName); if (w) input.value = w.value; input.step = "1"; unit.textContent = "fr"; }
-              else { const w = getW(secName); if (w) input.value = w.value; input.step = "0.01"; unit.textContent = "s"; }
+              const framesMode = timeMode() === "frames";
+              const w = getW(framesMode ? frmName : secName);
+              const mode = framesMode ? "frames" : "seconds";
+              const max = maxForMode(mode);
+              input.min = String(framesMode ? minFrm : minSec);
+              if (max !== null && max !== undefined) input.max = String(max);
+              else input.removeAttribute("max");
+              input.step = framesMode ? "1" : "0.01";
+              unit.textContent = framesMode ? "fr" : "s";
+              let value = w ? Number(w.value) : (framesMode ? minFrm : minSec);
+              if (!Number.isFinite(value)) value = framesMode ? minFrm : minSec;
+              if (max !== null && max !== undefined) value = Math.min(value, max);
+              input.value = value;
+              if (valueReadout) {
+                valueReadout.textContent = `${framesMode ? Math.round(value) : Number(value).toFixed(2)} ${framesMode ? "fr" : "s"}`;
+              }
             };
             input.addEventListener("change", () => {
               let v = parseFloat(input.value);
               if (isNaN(v)) v = 0;
+              const max = maxForMode(timeMode() === "frames" ? "frames" : "seconds");
+              if (max !== null && max !== undefined) v = Math.min(max, v);
               if (timeMode() === "frames") { v = Math.max(minFrm, Math.round(v)); setW(frmName, v); }
               else { v = Math.max(minSec, v); setW(secName, parseFloat(v.toFixed(3))); }
               timeRefreshers.forEach(fn => fn());
+            });
+            if (isSlider) input.addEventListener("input", () => {
+              const framesMode = timeMode() === "frames";
+              valueReadout.textContent = `${framesMode ? Math.round(Number(input.value)) : Number(input.value).toFixed(2)} ${framesMode ? "fr" : "s"}`;
             });
             timeRefreshers.push(refresh);
             refresh();
             return input;
           };
-          mkTimeRow(left, "Duration", "duration_seconds", "duration_frames", 0.1, 1);
+          const maxDurationForMode = (mode) => {
+            if (mode === "seconds") return H3_SAFE_MAX_DURATION_UI_SECONDS;
+            const fps = Math.max(1, parseFloat(getW("frame_rate")?.value) || 24);
+            return Math.floor(H3_SAFE_MAX_DURATION_SECONDS * fps + 1e-9);
+          };
+          const maxEndForMode = (mode) => {
+            const startName = mode === "frames" ? "start_frame" : "start_second";
+            return (parseFloat(getW(startName)?.value) || 0) + maxDurationForMode(mode);
+          };
+          mkTimeRow(left, "Duration", "duration_seconds", "duration_frames", 0.1, 1,
+                    { slider: true, maxValue: maxDurationForMode });
 
           // ---------- RIGHT: Timing / Reference ----------
           const right = mkCol("Timing / Reference");
@@ -12732,7 +12853,8 @@ app.registerExtension({
           });
           unitRow.appendChild(unitSel); right.appendChild(unitRow);
           mkTimeRow(right, "Start", "start_second", "start_frame", 0, 0);
-          mkTimeRow(right, "End", "end_second", "end_frame", 0, 1);
+          mkTimeRow(right, "End", "end_second", "end_frame", 0, 1,
+                    { maxValue: maxEndForMode });
           const rmRow = mkRow("Resize");
           const rmW = getW("resize_method");
           let rmVals = (rmW && rmW.options && rmW.options.values) ? rmW.options.values : null;

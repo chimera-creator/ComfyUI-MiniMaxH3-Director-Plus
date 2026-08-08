@@ -19,7 +19,7 @@ Repository = "https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director"
 [tool.comfy]
 # Must match the publisher you create at https://registry.comfy.org
 PublisherId = "seesee75-commits"
-DisplayName = "MiniMax H3 Director"
+DisplayName = "MiniMax H3 Director Plus"
 Icon = ""
 # comfy_api.latest, the packed AV latent and H3 support all landed in ComfyUI 0.30.0.
 requires-comfyui = ">=0.30.0"

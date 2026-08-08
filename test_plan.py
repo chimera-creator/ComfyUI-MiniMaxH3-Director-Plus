@@ -262,6 +262,22 @@ check("the sound boxes do not switch in retake mode",
                "retakePrompt": "she stumbles", "segments": []},
               duration_f=96)["prompt"].count("One value for the whole timeline."), 1)
 
+overridden_sections = compile(
+    tl([img(0, 144, prompt="the subject looks toward camera")], ref_mode="ON",
+       characters=chars,
+       subject_definitions="<Subject 1> is the detective shown in <Picture 1>.",
+       retention_analysis="Keep the detective's hat and scar consistent across every shot."))
+check_in("timeline subject_definitions overrides the automatic section",
+         "subject_definitions: <Subject 1> is the detective shown in <Picture 1>.",
+         overridden_sections["prompt"])
+check_in("timeline retention_analysis overrides the automatic section",
+         "retention_analysis: Keep the detective's hat and scar consistent across every shot.",
+         overridden_sections["prompt"])
+check_not_in("automatic subject_definitions is replaced",
+             "the character shown in <Picture 1>", overridden_sections["prompt"])
+check_not_in("automatic retention_analysis is replaced",
+             "Keep the identity, face and clothing", overridden_sections["prompt"])
+
 check("split_audio_music leaves a prompt without labels alone",
       plan.split_audio_music("just a description"), ("just a description", "", ""))
 check("split_audio_music takes a label only at the start of a line",
