@@ -18,6 +18,7 @@ import logging
 import math
 import os
 import platform
+import re
 import subprocess
 from urllib.parse import urlsplit, urlunsplit
 import wave
@@ -365,7 +366,9 @@ _ANALYZE_SYSTEM_PROMPT = (
     "in appearance. Wardrobe describes only clothing and accessories: hats, glasses, "
     "jewelry, shoes, bags, and garments. Never describe face, hair, body, or skin in "
     "wardrobe. Use an empty string when a category is not visible. Write complete, "
-    "concise sentences with normal punctuation."
+    "concise sentences with normal punctuation. The wardrobe value must begin exactly "
+    "with the lowercase words 'he is wearing' or 'she is wearing', using the pronoun "
+    "that matches the character."
 )
 
 _ANALYZE_PROMPT = (
@@ -381,6 +384,38 @@ def _merge_character_description(appearance, wardrobe):
     wardrobe = str(wardrobe or "").strip()
     parts = [part for part in (appearance, wardrobe) if part]
     return " ".join(parts)
+
+
+def _character_pronoun(text):
+    """Choose the requested he/she prefix from the model's wording."""
+    text = str(text or "").lower()
+    if re.search(r"\b(she|her|woman|girl|female)\b", text):
+        return "she"
+    if re.search(r"\b(he|him|his|man|boy|male)\b", text):
+        return "he"
+    return "he"
+
+
+def _normalize_wardrobe(wardrobe, appearance):
+    """Make the wardrobe field start with the exact phrase used by the Director."""
+    wardrobe = str(wardrobe or "").strip()
+    if not wardrobe:
+        return ""
+
+    pronoun = _character_pronoun(wardrobe) if re.match(
+        r"^(?:he|she|him|her|the man|the woman|the boy|the girl)\b",
+        wardrobe, re.IGNORECASE) else _character_pronoun(appearance)
+    leading = re.compile(
+        r"^(?:he|she|they|him|her|the man|the woman|the boy|the girl)\s+"
+        r"(?:(?:is\s+)?(?:wearing|wears|dressed\s+in)|has)\s+",
+        re.IGNORECASE,
+    )
+    match = leading.match(wardrobe)
+    remainder = wardrobe[match.end():].strip() if match else wardrobe
+    if remainder:
+        remainder = remainder[:1].lower() + remainder[1:]
+        return "%s is wearing %s" % (pronoun, remainder)
+    return "%s is wearing" % pronoun
 
 
 def _parse_character_analysis(text):
@@ -409,7 +444,7 @@ def _parse_character_analysis(text):
                         "an object with appearance and wardrobe fields.")
 
     appearance = str(parsed.get("appearance") or "").strip()
-    wardrobe = str(parsed.get("wardrobe") or "").strip()
+    wardrobe = _normalize_wardrobe(parsed.get("wardrobe"), appearance)
     return {
         "appearance": appearance,
         "wardrobe": wardrobe,
@@ -579,8 +614,9 @@ async def analyze_character_endpoint(request):
         log.info("[MiniMaxDirector] Analyzing Character %d via %s (%s, model '%s')...",
                  char_index + 1, provider, base_url, model_name)
         try:
-            generated_text = await vlm_generate(cleaned, _ANALYZE_PROMPT, provider,
-                                                base_url, model_name, api_key=api_key)
+            generated_text = await vlm_generate(
+                cleaned, _ANALYZE_PROMPT, provider, base_url, model_name,
+                system_prompt=_ANALYZE_SYSTEM_PROMPT, api_key=api_key)
         except VLMError as e:
             return web.json_response({"status": "error", "message": str(e)})
 
