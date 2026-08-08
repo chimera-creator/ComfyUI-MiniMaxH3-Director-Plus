@@ -719,6 +719,50 @@ async def analyze_wardrobe_item_endpoint(request):
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
+@PromptServer.instance.routes.get("/minimax_director/projects")
+async def list_projects_endpoint(request):
+    """List saved project folders without exposing absolute filesystem paths."""
+    try:
+        from .minimax_projects import list_projects
+        return web.json_response({"status": "success", "projects": list_projects()})
+    except Exception as e:
+        log.error("[MiniMaxDirector] Failed to list projects: %s", e)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/minimax_director/projects/load")
+async def load_project_endpoint(request):
+    try:
+        from .minimax_projects import load_project
+        project_name = request.query.get("name", "")
+        document = load_project(project_name)
+        if document is None:
+            return web.json_response({"status": "error", "message": "Project not found."}, status=404)
+        return web.json_response({"status": "success", "project": document})
+    except ValueError as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=400)
+    except Exception as e:
+        log.error("[MiniMaxDirector] Failed to load project: %s", e)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/minimax_director/projects/save")
+async def save_project_endpoint(request):
+    try:
+        from .minimax_projects import save_project
+        data = await request.json()
+        document = save_project(
+            data.get("project"), data.get("source"), data.get("data", {}),
+            data.get("resource_refs"),
+        )
+        return web.json_response({"status": "success", "project": document})
+    except ValueError as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=400)
+    except Exception as e:
+        log.error("[MiniMaxDirector] Failed to save project: %s", e)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
 async def unload_model(provider, base_url, model):
     """Evict the model from VRAM. Never raises — freeing memory must not fail a render.
 

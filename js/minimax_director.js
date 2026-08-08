@@ -12,6 +12,29 @@
 const { app } = window.comfyAPI.app;
 const { api } = window.comfyAPI.api;
 
+async function mmxdFetchProjects() {
+  const response = await api.fetchApi("/minimax_director/projects");
+  const result = await response.json();
+  if (result.status !== "success") throw new Error(result.message || "Could not list projects");
+  return Array.isArray(result.projects) ? result.projects : [];
+}
+
+async function mmxdLoadProject(name) {
+  const response = await api.fetchApi(`/minimax_director/projects/load?name=${encodeURIComponent(name)}`);
+  const result = await response.json();
+  if (result.status !== "success") throw new Error(result.message || "Could not load project");
+  return result.project || {};
+}
+
+async function mmxdSaveProjectSource(project, source, data) {
+  const response = await api.fetchApi("/minimax_director/projects/save", {
+    method: "POST", body: JSON.stringify({ project, source, data }),
+  });
+  const result = await response.json();
+  if (result.status !== "success") throw new Error(result.message || "Could not save project");
+  return result.project || {};
+}
+
 // Verbose tracing, off by default so the browser console stays readable.
 // Run `window.MMXD_DEBUG = true` in the console (F12) and reload the workflow to get the
 // timeline JSON dumped on create / sync / save / configure — that is what to attach to a
@@ -12599,6 +12622,7 @@ app.registerExtension({
         if (!this.properties) this.properties = {};
         const DEFAULTS = {
           global_prompt: "",
+          project_name: "",
           mainTrackEnabled: true,
           audioTrackEnabled: true,
           motionTrackEnabled: true,
@@ -13166,15 +13190,240 @@ app.registerExtension({
               + "Video and audio counts use clips overlapping the current render window.";
           };
           node._mmxRefreshReferenceCounter = refreshReferenceCounter;
+
+          // ---------- shared project storage ----------------------------------
+          // A project is merged on the backend, so saving the Director also keeps
+          // the connected Casting/Wardrobe/Enhance sources in the same folder.
+          const projectBar = document.createElement("div");
+          Object.assign(projectBar.style, {
+            display: "flex", alignItems: "center", gap: "6px", width: "100%",
+            boxSizing: "border-box", padding: "5px 8px", background: "#181818",
+            border: "1px solid #3a3a3a", borderRadius: "6px", flexWrap: "wrap",
+          });
+          const projectLabel = document.createElement("span");
+          projectLabel.textContent = "PROJECT";
+          Object.assign(projectLabel.style, {
+            color: "#888", fontSize: "9px", fontWeight: "700", letterSpacing: "0.5px",
+          });
+          const projectSelect = document.createElement("select");
+          Object.assign(projectSelect.style, {
+            flex: "1 1 170px", minWidth: "120px", height: "24px", boxSizing: "border-box",
+            background: "#2b2b2b", border: "1px solid #484848", borderRadius: "4px",
+            color: "#eaeaea", fontSize: "10px", outline: "none",
+          });
+          const projectNameInput = document.createElement("input");
+          projectNameInput.type = "text";
+          projectNameInput.placeholder = "New or existing project name";
+          projectNameInput.value = String(node.properties?.project_name || "");
+          Object.assign(projectNameInput.style, {
+            flex: "1 1 190px", minWidth: "140px", height: "24px", boxSizing: "border-box",
+            background: "#2b2b2b", border: "1px solid #484848", borderRadius: "4px",
+            color: "#eaeaea", padding: "1px 5px", fontSize: "10px", outline: "none",
+          });
+          const projectButton = (label) => {
+            const button = document.createElement("button");
+            button.textContent = label;
+            Object.assign(button.style, {
+              height: "24px", padding: "2px 8px", background: "#252525", color: "#bdbdbd",
+              border: "1px solid #484848", borderRadius: "4px", fontSize: "8px",
+              fontWeight: "700", cursor: "pointer",
+            });
+            return button;
+          };
+          const projectRefresh = projectButton("REFRESH");
+          const projectSave = projectButton("SAVE PROJECT");
+          const projectMessage = document.createElement("span");
+          Object.assign(projectMessage.style, {
+            flex: "1 1 100%", color: "#666", fontSize: "9px", minHeight: "12px",
+          });
+          projectBar.appendChild(projectLabel);
+          projectBar.appendChild(projectSelect);
+          projectBar.appendChild(projectNameInput);
+          projectBar.appendChild(projectRefresh);
+          projectBar.appendChild(projectSave);
+          projectBar.appendChild(projectMessage);
+
+          const setProjectMessage = (message, error = false) => {
+            projectMessage.textContent = message || "";
+            projectMessage.style.color = error ? "#d86f6f" : "#666";
+          };
+          const renderProjectOptions = (projects) => {
+            projectSelect.innerHTML = "";
+            const blank = document.createElement("option");
+            blank.value = "";
+            blank.textContent = "Select project...";
+            projectSelect.appendChild(blank);
+            for (const project of projects || []) {
+              const option = document.createElement("option");
+              option.value = project.name;
+              option.textContent = project.name;
+              projectSelect.appendChild(option);
+            }
+            projectSelect.value = String(node.properties?.project_name || "");
+          };
+          const refreshProjectList = async () => {
+            try {
+              const projects = await mmxdFetchProjects();
+              renderProjectOptions(projects);
+              if (node.properties?.project_name) {
+                setProjectMessage(`Project: ${node.properties.project_name}`);
+              }
+            } catch (error) {
+              setProjectMessage(error.message || String(error), true);
+            }
+          };
+          const cloneForProject = (value) => {
+            try { return JSON.parse(JSON.stringify(value)); } catch (_) { return {}; }
+          };
+          const originForInput = (target, inputName) => {
+            const input = target?.inputs?.find(item => item.name === inputName);
+            const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+            return link ? app.graph?.getNodeById(link.origin_id) : null;
+          };
+          const snapshotNode = (sourceNode) => {
+            if (!sourceNode) return null;
+            const widgets = {};
+            for (const widget of sourceNode.widgets || []) {
+              if (widget?.name && widget.value !== undefined) widgets[widget.name] = cloneForProject(widget.value);
+            }
+            return {
+              node_type: sourceNode.comfyClass || sourceNode.type || "",
+              widgets,
+              properties: cloneForProject(sourceNode.properties || {}),
+            };
+          };
+          const sourcePayload = (sourceNode, extra = {}) => ({
+            ...snapshotNode(sourceNode), ...extra,
+          });
+          const connectedSourceNodes = () => {
+            const directCast = originForInput(node, "cast");
+            let wardrobeSource = null;
+            let castingSource = null;
+            if (directCast && String(directCast.comfyClass || directCast.type || "").toLowerCase().includes("wardrobe")) {
+              wardrobeSource = directCast;
+              castingSource = originForInput(wardrobeSource, "cast_wardrobe");
+            } else if (directCast && String(directCast.comfyClass || directCast.type || "").toLowerCase().includes("casting")) {
+              castingSource = directCast;
+            }
+            return { wardrobeSource, castingSource };
+          };
+          const enhancedSource = () => {
+            const source = originForInput(node, "global_prompt");
+            const type = String(source?.comfyClass || source?.type || "").toLowerCase();
+            return type.includes("enhance") ? source : null;
+          };
+          const saveProject = async () => {
+            const project = String(projectNameInput.value || "").trim();
+            if (!project) {
+              setProjectMessage("Enter a project name first.", true);
+              projectNameInput.focus();
+              return;
+            }
+            node.properties = { ...(node.properties || {}), project_name: project };
+            const timeline = node._timelineEditor?.timeline || readJson(getW("timeline_data")?.value || "{}");
+            const cast = readJson(connectedCastData());
+            const sources = connectedSourceNodes();
+            const enhance = enhancedSource();
+            const directorData = {
+              prompt: node._mmxCompiledPrompt || "",
+              prompt_metadata: cloneForProject(node._mmxCompiledPromptMeta || {}),
+              global_prompt: String(node.properties?.global_prompt || ""),
+              timeline,
+              metadata: {
+                width: getW("custom_width")?.value,
+                height: getW("custom_height")?.value,
+                frame_rate: getW("frame_rate")?.value,
+                start_frame: getW("start_frame")?.value,
+                end_frame: getW("end_frame")?.value,
+                duration_frames: getW("duration_frames")?.value,
+                start_second: getW("start_second")?.value,
+                end_second: getW("end_second")?.value,
+                duration_seconds: getW("duration_seconds")?.value,
+                resize_method: getW("resize_method")?.value,
+                ref_image_size: getW("ref_image_size")?.value,
+              },
+              cast,
+              connected_sources: {
+                casting: !!sources.castingSource,
+                wardrobe: !!sources.wardrobeSource,
+                enhanced_prompt: !!enhance,
+              },
+            };
+            try {
+              let document = await mmxdSaveProjectSource(project, "director", directorData);
+              if (sources.castingSource) {
+                document = await mmxdSaveProjectSource(project, "casting", sourcePayload(sources.castingSource, {
+                  cast_data: sources.castingSource.properties?.cast_data || "",
+                }));
+              }
+              if (sources.wardrobeSource) {
+                document = await mmxdSaveProjectSource(project, "wardrobe", sourcePayload(sources.wardrobeSource, {
+                  wardrobe_data: sources.wardrobeSource.properties?.wardrobe_data || "",
+                  cast_wardrobe_output: sources.wardrobeSource.properties?.cast_wardrobe_output || "",
+                }));
+              }
+              if (enhance) {
+                document = await mmxdSaveProjectSource(project, "enhanced_prompt", sourcePayload(enhance, {
+                  output_prompt: String(node.properties?.global_prompt || ""),
+                }));
+              }
+              renderProjectOptions(await mmxdFetchProjects());
+              setProjectMessage(`Saved ${document.project_name} with ${document.resources?.length || 0} resources.`);
+            } catch (error) {
+              setProjectMessage(error.message || String(error), true);
+            }
+          };
+          const applyProjectDirector = (directorData) => {
+            if (!directorData || typeof directorData !== "object") return;
+            if (directorData.global_prompt !== undefined) {
+              node.properties = { ...(node.properties || {}), global_prompt: String(directorData.global_prompt || "") };
+            }
+            if (directorData.timeline && typeof directorData.timeline === "object") {
+              const serialized = JSON.stringify(directorData.timeline);
+              setW("timeline_data", serialized);
+              if (node._timelineEditor) {
+                node._timelineEditor.timeline = cloneForProject(directorData.timeline);
+                node._timelineEditor.loadMedia?.();
+                node._timelineEditor.syncWidgetsAndUI?.();
+                node._timelineEditor.render?.();
+              }
+            }
+            node._mmxCompiledPrompt = String(directorData.prompt || "");
+            node._mmxRefreshPrompt?.();
+            node._mmxSettingsRefresh?.();
+          };
+          const loadProjectIntoDirector = async () => {
+            const project = String(projectSelect.value || projectNameInput.value || "").trim();
+            if (!project) return;
+            try {
+              const document = await mmxdLoadProject(project);
+              applyProjectDirector(document.sources?.director);
+              projectNameInput.value = project;
+              node.properties = { ...(node.properties || {}), project_name: project };
+              setProjectMessage(`Loaded ${project}.`);
+            } catch (error) {
+              setProjectMessage(error.message || String(error), true);
+            }
+          };
+          projectNameInput.addEventListener("input", () => {
+            node.properties = { ...(node.properties || {}), project_name: projectNameInput.value.trim() };
+          });
+          projectSelect.addEventListener("change", loadProjectIntoDirector);
+          projectRefresh.addEventListener("click", () => { void refreshProjectList(); });
+          projectSave.addEventListener("click", () => { void saveProject(); });
           panelRoot.appendChild(referenceBudget);
+          panelRoot.appendChild(projectBar);
           panelRoot.appendChild(columns);
           refreshReferenceCounter();
+          void refreshProjectList();
 
           // Re-read widget values into the panel. Saved values are restored AFTER onNodeCreated,
           // so we must refresh on load (onConfigure + a post-tick) or the panel shows defaults.
           const refreshFromWidgets = () => {
             const cw = getW("custom_width"), ch = getW("custom_height"), fr = getW("frame_rate"),
                   rm = getW("resize_method"), rs = getW("ref_image_size");
+            if (projectNameInput) projectNameInput.value = String(node.properties?.project_name || "");
+            if (projectSelect) projectSelect.value = String(node.properties?.project_name || "");
             if (cw) widthIn.value = cw.value;
             if (ch) heightIn.value = ch.value;
             if (fr) fpsIn.value = fr.value;
@@ -13203,7 +13452,7 @@ app.registerExtension({
           getValue: () => "",
           setValue: () => { },
         });
-        settingsWidget.computeSize = function () { return [0, 220]; };
+        settingsWidget.computeSize = function () { return [0, 282]; };
         const _mmxOrigOnConfigure = this.onConfigure;
         this.onConfigure = function () {
           if (_mmxOrigOnConfigure) _mmxOrigOnConfigure.apply(this, arguments);
@@ -13383,6 +13632,11 @@ app.registerExtension({
             const d = await resp.json();
             if (d.status !== "success") throw new Error(d.message || "compile failed");
             pText.textContent = d.prompt || "";
+            self._mmxCompiledPrompt = d.prompt || "";
+            self._mmxCompiledPromptMeta = {
+              mode: d.mode, format: d.format, shots: d.shots, length: d.length,
+              seconds: d.seconds, refs: d.refs, warnings: d.warnings || [],
+            };
             pBadge.textContent = `${d.mode} · ${d.format || ""} · ${d.shots} shot${d.shots === 1 ? "" : "s"} · `
               + `${d.length}f / ${d.seconds}s · refs ${d.refs.images}i/${d.refs.videos}v/${d.refs.audios}a`;
             pWarn.textContent = (d.warnings || []).join("  •  ");

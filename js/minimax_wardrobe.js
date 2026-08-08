@@ -6,8 +6,9 @@ const { api } = window.comfyAPI.api;
 
 const MAX_WARDROBE_ITEMS = 18;
 const MAX_CHARACTERS = 9;
+const WARDROBE_CATEGORIES = ["Full Outfits", "Tops", "Bottoms", "Accessories", "Anatomy"];
 
-const emptyItem = () => ({ images: [], description: "", character_slots: [] });
+const emptyItem = () => ({ images: [], description: "", category: WARDROBE_CATEGORIES[0], character_slots: [] });
 
 function emptyWardrobe() {
   return {
@@ -27,6 +28,7 @@ function parseWardrobe(value) {
     images: Array.isArray(item?.images) ? item.images.slice(0, 1) :
       (item?.image ? [item.image] : []),
     description: String(item?.description || ""),
+    category: WARDROBE_CATEGORIES.includes(item?.category) ? item.category : WARDROBE_CATEGORIES[0],
     character_slots: Array.from(new Set(
       (item?.character_slots || item?.characters || [])
         .map((slot) => Number(slot))
@@ -39,6 +41,30 @@ function parseWardrobe(value) {
 
 function readJson(value) {
   try { return value ? JSON.parse(value) : {}; } catch (_) { return {}; }
+}
+
+async function fetchProjects() {
+  const response = await api.fetchApi("/minimax_director/projects");
+  const result = await response.json();
+  if (result.status !== "success") throw new Error(result.message || "Could not list projects");
+  return Array.isArray(result.projects) ? result.projects : [];
+}
+
+async function loadProject(name) {
+  const response = await api.fetchApi(`/minimax_director/projects/load?name=${encodeURIComponent(name)}`);
+  const result = await response.json();
+  if (result.status !== "success") throw new Error(result.message || "Could not load project");
+  return result.project || {};
+}
+
+async function saveProjectSource(project, source, data) {
+  const response = await api.fetchApi("/minimax_director/projects/save", {
+    method: "POST",
+    body: JSON.stringify({ project, source, data }),
+  });
+  const result = await response.json();
+  if (result.status !== "success") throw new Error(result.message || "Could not save project");
+  return result.project || {};
 }
 
 function sourceCastFor(node) {
@@ -99,6 +125,17 @@ const WARDROBE_STYLES = `
   .mmxd-wardrobe-head { display:flex; align-items:center; gap:8px; margin:0 0 6px; }
   .mmxd-wardrobe-title { color:#888; font-size:10px; font-weight:700; letter-spacing:.7px; }
   .mmxd-wardrobe-help { color:#666; font-size:9px; flex:1; }
+  .mmxd-wardrobe-projects { display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin:0 0 7px; }
+  .mmxd-wardrobe-projects label { color:#777; font-size:8px; text-transform:uppercase; letter-spacing:.35px; }
+  .mmxd-wardrobe-project-select, .mmxd-wardrobe-project-name, .mmxd-wardrobe-category {
+    box-sizing:border-box; min-width:0; height:23px; padding:2px 5px; background:#111;
+    color:#d8d8d8; border:1px solid #3a3a3a; border-radius:4px; font-size:9px; font-family:inherit; outline:none;
+  }
+  .mmxd-wardrobe-project-select { flex:1 1 150px; }
+  .mmxd-wardrobe-project-name { flex:1 1 130px; }
+  .mmxd-wardrobe-project-button { height:23px; padding:2px 7px; background:#252525; color:#bdbdbd;
+    border:1px solid #444; border-radius:4px; font-size:8px; font-weight:700; cursor:pointer; }
+  .mmxd-wardrobe-project-button:hover { color:#fff; border-color:#777; }
   .mmxd-wardrobe-status { color:#666; font-size:9px; margin:0 0 7px; }
   .mmxd-wardrobe-items { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; width:100%; }
   .mmxd-wardrobe-item { min-width:0; height:220px; box-sizing:border-box; background:#1e1e1e;
@@ -126,6 +163,7 @@ const WARDROBE_STYLES = `
     resize:none; outline:none; background:#111; color:#e0e0e0; border:1px solid #333;
     border-radius:4px; font-family:inherit; font-size:9px; }
   .mmxd-wardrobe-description:focus { border-color:#4fff8f; }
+  .mmxd-wardrobe-category { width:100%; margin-top:4px; }
   .mmxd-wardrobe-assign-label { color:#777; font-size:8px; line-height:10px; margin-top:4px;
     text-transform:uppercase; letter-spacing:.35px; }
   .mmxd-wardrobe-assignments { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:3px; margin-top:2px; }
@@ -179,11 +217,49 @@ app.registerExtension({
       });
       uiWidget.serialize = false;
       uiWidget.computeSize = function (width) {
-        return [Math.max(10, width || node.size?.[0] || 760), 1410];
+        return [Math.max(10, width || node.size?.[0] || 760), 1540];
       };
 
       let wardrobe = parseWardrobe(wardrobeWidget?.value || "");
       let outputRevision = 0;
+      let projectList = [];
+      let selectedProject = String(node.properties?.project_name || "");
+      let projectSelect = null;
+      let projectNameInput = null;
+      let projectStatus = null;
+
+      const setProjectStatus = (message, isError = false) => {
+        if (!projectStatus) return;
+        projectStatus.textContent = message || "";
+        projectStatus.style.color = isError ? "#d86f6f" : "#666";
+      };
+
+      const renderProjectOptions = () => {
+        if (!projectSelect) return;
+        projectSelect.innerHTML = "";
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "Select project...";
+        projectSelect.appendChild(blank);
+        for (const project of projectList) {
+          const option = document.createElement("option");
+          option.value = project.name;
+          option.textContent = project.name;
+          projectSelect.appendChild(option);
+        }
+        projectSelect.value = selectedProject;
+        if (projectNameInput && selectedProject) projectNameInput.value = selectedProject;
+      };
+
+      const refreshProjects = async () => {
+        try {
+          projectList = await fetchProjects();
+          renderProjectOptions();
+          if (selectedProject) setProjectStatus(`Project: ${selectedProject}`);
+        } catch (error) {
+          setProjectStatus(error.message || String(error), true);
+        }
+      };
 
       const imageDataUrl = async (image) => {
         if (!image) return null;
@@ -293,6 +369,7 @@ app.registerExtension({
         const items = wardrobe.items.map((item) => ({
           images: (item.images || []).slice(0, 1),
           description: String(item.description || "").trim(),
+          category: WARDROBE_CATEGORIES.includes(item.category) ? item.category : WARDROBE_CATEGORIES[0],
           character_slots: Array.from(new Set((item.character_slots || [])
             .map((slot) => Number(slot))
             .filter((slot) => Number.isInteger(slot) && slot >= 1 && slot <= characters.length))),
@@ -342,6 +419,49 @@ app.registerExtension({
             }
           }
         });
+      };
+
+      const saveProjectSnapshot = async () => {
+        const project = String(projectNameInput?.value || selectedProject || "").trim();
+        if (!project) {
+          setProjectStatus("Enter a project name first.", true);
+          projectNameInput?.focus();
+          return;
+        }
+        selectedProject = project;
+        node.properties = { ...(node.properties || {}), project_name: project };
+        try {
+          const document = await saveProjectSource(project, "wardrobe", {
+            wardrobe_data: wardrobe,
+            cast_wardrobe: sourceCastFor(node),
+            analyze_settings: sourceAnalyzeSettingsFor(node),
+          });
+          projectList = await fetchProjects();
+          renderProjectOptions();
+          setProjectStatus(`Saved ${document.project_name}.`);
+        } catch (error) {
+          setProjectStatus(error.message || String(error), true);
+        }
+      };
+
+      const loadSelectedProject = async () => {
+        const project = String(projectSelect?.value || projectNameInput?.value || "").trim();
+        if (!project) return;
+        try {
+          const document = await loadProject(project);
+          const saved = document?.sources?.wardrobe?.wardrobe_data;
+          if (saved) {
+            wardrobe = parseWardrobe(saved);
+            save();
+            renderItems();
+          }
+          selectedProject = project;
+          node.properties = { ...(node.properties || {}), project_name: project };
+          if (projectNameInput) projectNameInput.value = project;
+          setProjectStatus(`Loaded ${project}.`);
+        } catch (error) {
+          setProjectStatus(error.message || String(error), true);
+        }
       };
 
       const imageSrc = (image) => {
@@ -419,7 +539,7 @@ app.registerExtension({
             if (file) uploadImage(file, index);
           });
           card.addEventListener("click", (event) => {
-            if (event.target.closest("button, textarea")) return;
+            if (event.target.closest("button, textarea, select, input")) return;
             inputFileForImage((file) => uploadImage(file, index));
           });
 
@@ -478,6 +598,21 @@ app.registerExtension({
           }
           card.appendChild(previewWrap);
 
+          const category = document.createElement("select");
+          category.className = "mmxd-wardrobe-category";
+          for (const categoryName of WARDROBE_CATEGORIES) {
+            const option = document.createElement("option");
+            option.value = categoryName;
+            option.textContent = categoryName;
+            category.appendChild(option);
+          }
+          category.value = WARDROBE_CATEGORIES.includes(item.category)
+            ? item.category : WARDROBE_CATEGORIES[0];
+          category.title = "Reference category";
+          category.addEventListener("click", (event) => event.stopPropagation());
+          category.addEventListener("change", () => { item.category = category.value; save(); });
+          card.appendChild(category);
+
           const descriptionLabel = document.createElement("label");
           descriptionLabel.className = "mmxd-wardrobe-field-label";
           descriptionLabel.textContent = "Item description";
@@ -527,6 +662,38 @@ app.registerExtension({
       help.className = "mmxd-wardrobe-help";
       help.textContent = "Assign clothing/accessories · connect ANALYZE SETTINGS for item analysis";
       head.appendChild(title); head.appendChild(help);
+      const projectBar = document.createElement("div");
+      projectBar.className = "mmxd-wardrobe-projects";
+      const projectLabel = document.createElement("label");
+      projectLabel.textContent = "Project";
+      projectSelect = document.createElement("select");
+      projectSelect.className = "mmxd-wardrobe-project-select";
+      projectSelect.title = "Load a saved wardrobe project";
+      projectSelect.addEventListener("change", loadSelectedProject);
+      projectNameInput = document.createElement("input");
+      projectNameInput.className = "mmxd-wardrobe-project-name";
+      projectNameInput.placeholder = "New or existing project name";
+      projectNameInput.value = selectedProject;
+      projectNameInput.addEventListener("input", () => {
+        selectedProject = projectNameInput.value.trim();
+        node.properties = { ...(node.properties || {}), project_name: selectedProject };
+      });
+      const refreshProjectsButton = document.createElement("button");
+      refreshProjectsButton.className = "mmxd-wardrobe-project-button";
+      refreshProjectsButton.textContent = "REFRESH";
+      refreshProjectsButton.addEventListener("click", () => { void refreshProjects(); });
+      const saveProjectButton = document.createElement("button");
+      saveProjectButton.className = "mmxd-wardrobe-project-button";
+      saveProjectButton.textContent = "SAVE PROJECT";
+      saveProjectButton.addEventListener("click", () => { void saveProjectSnapshot(); });
+      projectBar.appendChild(projectLabel);
+      projectBar.appendChild(projectSelect);
+      projectBar.appendChild(projectNameInput);
+      projectBar.appendChild(refreshProjectsButton);
+      projectBar.appendChild(saveProjectButton);
+      projectStatus = document.createElement("span");
+      projectStatus.className = "mmxd-wardrobe-status";
+      projectStatus.style.margin = "0 0 5px";
       const status = document.createElement("div");
       status.className = "mmxd-wardrobe-status";
       const itemsContainer = document.createElement("div");
@@ -534,7 +701,8 @@ app.registerExtension({
       const footer = document.createElement("div");
       footer.className = "mmxd-wardrobe-footer";
       footer.textContent = "Up to 18 item image slots. One wardrobe collage is generated per assigned character and sent to the Director's cast input.";
-      container.appendChild(head); container.appendChild(status); container.appendChild(itemsContainer); container.appendChild(footer);
+      container.appendChild(head); container.appendChild(projectBar); container.appendChild(projectStatus);
+      container.appendChild(status); container.appendChild(itemsContainer); container.appendChild(footer);
 
       const refresh = () => {
         wardrobe = parseWardrobe(wardrobeWidget?.value || node._wardrobeData || "");
@@ -543,6 +711,8 @@ app.registerExtension({
       };
       node._wardrobeRefresh = refresh;
       refresh();
+      renderProjectOptions();
+      void refreshProjects();
       setTimeout(refresh, 0);
       setTimeout(refresh, 100);
     };
@@ -562,7 +732,8 @@ app.registerExtension({
       if (widget?.value) {
         this.properties = { ...(this.properties || {}), wardrobe_data: widget.value };
         info.properties = { ...(info.properties || {}), wardrobe_data: widget.value,
-          cast_wardrobe_output: this.properties.cast_wardrobe_output || "" };
+          cast_wardrobe_output: this.properties.cast_wardrobe_output || "",
+          project_name: this.properties.project_name || "" };
       }
       return result;
     };

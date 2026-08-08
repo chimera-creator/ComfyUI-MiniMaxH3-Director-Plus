@@ -17,10 +17,16 @@ from . import minimax_media as media
 MAX_WARDROBE_ITEMS = 18
 COLLAGE_TILE = 256
 COLLAGE_COLUMNS = 4
+WARDROBE_CATEGORIES = (
+    "Full Outfits", "Tops", "Bottoms", "Accessories", "Anatomy",
+)
 
 
 def _empty_item():
-    return {"images": [], "description": "", "character_slots": []}
+    return {
+        "images": [], "description": "", "category": WARDROBE_CATEGORIES[0],
+        "character_slots": [],
+    }
 
 
 def _empty_wardrobe():
@@ -66,9 +72,13 @@ def _normalise_items(value):
         clean_images = [image for image in images
                         if isinstance(image, dict) and (image.get("name") or image.get("b64"))]
         assignments = raw.get("character_slots", raw.get("characters", []))
+        category = str(raw.get("category") or WARDROBE_CATEGORIES[0]).strip()
+        if category not in WARDROBE_CATEGORIES:
+            category = WARDROBE_CATEGORIES[0]
         items.append({
             "images": clean_images[:1],
             "description": str(raw.get("description") or "").strip(),
+            "category": category,
             "character_slots": _parse_int_list(assignments),
         })
     while len(items) < MAX_WARDROBE_ITEMS:

@@ -298,6 +298,14 @@ Connect the Casting Director's `ANALYZE SETTINGS` output to enable an **ANALYZE*
 on each item; the same provider, model, URL, and optional API key are used for the item
 description analysis.
 
+Wardrobe items also have a category dropdown: **Full Outfits**, **Tops**, **Bottoms**,
+**Accessories**, or **Anatomy**. Use Anatomy for close-up references of distinctive body
+parts. Both the Wardrobe Director and the main Director can save to a named project. Project
+data is merged into `Projects/<project>/wardrobe/project.json`, with referenced input assets
+copied into `Projects/<project>/wardrobe/resources/`. A Director save includes the compiled
+prompt, timeline, render metadata, cast/wardrobe connections, and connected enhanced-prompt
+settings; later saves from the connected nodes update their source sections in the same file.
+
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the
 warnings rather than silently ignored.
