@@ -13146,6 +13146,9 @@ app.registerExtension({
                 ? externalCast.wardrobe_items : []).reduce((sum, item) =>
                   (item?.character_slots || item?.characters || []).length > 0
                     ? sum + (Array.isArray(item?.images) ? item.images.length : 0) : sum, 0);
+            const locationImages = (Array.isArray(externalCast.location_references)
+              ? externalCast.location_references : []).reduce((sum, location) =>
+                sum + (Array.isArray(location?.images) ? location.images.length : 0), 0);
             const extraImageInput = node.inputs?.some(input =>
               input.name === "ref_images" && input.link != null) ? 1 : 0;
             const start = Math.max(0, Number(getW("start_frame")?.value ?? timeline.normalStartFrame ?? 0));
@@ -13159,7 +13162,8 @@ app.registerExtension({
             const audios = (timeline.audioSegments || []).filter(segment =>
               (segment?.audioFile || segment?.audioB64 || segment?._blobUrl || segment?._audioBuffer) &&
               overlapsBudgetWindow(segment, start, end)).length;
-            const images = characterImages + wardrobeImages + extraImageInput + timelineImages;
+            const images = characterImages + wardrobeImages + locationImages
+              + extraImageInput + timelineImages;
             const total = images + videos + audios;
             const overImage = images > 9;
             const overVideo = videos > 3;

@@ -241,6 +241,29 @@ check_in("wardrobe collage gets its own prompt section and picture reference",
          collage_prompt["prompt"])
 check_not_in("wardrobe description stays out of character section",
              "a red jacket", collage_prompt["prompt"].split("\n\n")[0])
+location_cast = plan.merge_cast({}, json.dumps({
+    "characters": [{"images": [{"name": "char.png"}],
+                    "description": "a traveler"}],
+    "wardrobe_collages": [{"character_slot": 1,
+                            "images": [{"name": "wardrobe.png"}],
+                            "description": "a dark coat"}],
+    "location_references": [{"images": [{"name": "location.png"}],
+                              "description": "a stone courtyard"}],
+}))
+location_prompt = compile(tl([img(0, 144)], ref_mode="ON",
+                              characters=location_cast["characters"],
+                              wardrobe_collages=location_cast["wardrobe_collages"],
+                              location_references=location_cast["location_references"]))
+check("location reference follows cast and wardrobe references",
+      [slot["source"] for slot in location_prompt["ref_image_slots"][:3]],
+      ["char", "wardrobe", "location"])
+check_in("location definitions bind the assigned Picture ordinal",
+         "location_definitions: <Location 1> is shown in <Picture 3>: a stone courtyard.",
+         location_prompt["prompt"])
+check("location references survive external cast parsing",
+      plan.parse_cast(json.dumps({"characters": [], "location_references": [
+          {"images": [{"name": "set.png"}], "description": "a set"}]}))[
+              "location_references"][0]["images"][0]["name"], "set.png")
 anatomy_cast = plan.merge_cast({}, json.dumps({
     "characters": [{"images": [{"name": "char.png"}],
                     "pronouns": "she",

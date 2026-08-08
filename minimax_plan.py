@@ -195,8 +195,26 @@ def parse_cast(cast_data):
             "anatomy_description": str(collage.get("anatomy_description") or "").strip(),
             "item_count": int(collage.get("item_count") or 0),
         })
+    location_references = []
+    raw_locations = raw.get("location_references")
+    if not isinstance(raw_locations, list):
+        raw_locations = []
+    for location in raw_locations[:MAX_REF_IMAGES]:
+        location = location if isinstance(location, dict) else {}
+        images = location.get("images") if isinstance(location.get("images"), list) else []
+        if not images and isinstance(location.get("image"), dict):
+            images = [location["image"]]
+        clean_images = [img for img in images
+                        if isinstance(img, dict) and (img.get("name") or img.get("b64"))]
+        if not clean_images:
+            continue
+        location_references.append({
+            "images": clean_images[:1],
+            "description": str(location.get("description") or "").strip(),
+        })
     return {"characters": characters, "wardrobe_items": wardrobe_items,
-            "wardrobe_collages": wardrobe_collages}
+            "wardrobe_collages": wardrobe_collages,
+            "location_references": location_references}
 
 
 def merge_cast(tdata, cast_data):
@@ -359,6 +377,28 @@ def build_wardrobe_definitions(wardrobe_collages, ref_image_slots, subject_of_sl
     return lines
 
 
+def build_location_definitions(location_references, ref_image_slots):
+    """Bind Location Scout references to the concrete Picture ordinals."""
+    lines = []
+    location_number = 0
+    for location_index, location in enumerate(location_references):
+        ordinals = [i + 1 for i, slot in enumerate(ref_image_slots)
+                    if slot.get("source") == "location"
+                    and slot.get("location_index") == location_index]
+        if not ordinals:
+            continue
+        location_number += 1
+        pictures = " and ".join("<Picture %d>" % ordinal for ordinal in ordinals)
+        description = str(location.get("description") or "").strip()
+        line = "<Location %d> is shown in %s" % (location_number, pictures)
+        if description:
+            line += ": " + description
+        if not line.endswith((".", "!", "?")):
+            line += "."
+        lines.append(line)
+    return lines
+
+
 def alignment_instruction(has_first, has_last, shot_count, seconds):
     """The image-alignment line the base guide requires as the very first line.
 
@@ -396,7 +436,7 @@ def alignment_instruction(has_first, has_last, shot_count, seconds):
 
 def compile_storyboard_minimax(global_prompt, shots, soundscape="", music="",
                                subject_lines=None, wardrobe_lines=None, retention_lines=None,
-                               instruction=""):
+                               instruction="", location_lines=None):
     """The notation MiniMax documents in VIDEO_PROMPT_WRITING_GUIDE_*.md.
 
     `integrated_multimodal_description: [Shot 1] … [Shot 2] At 00:05.000, …`, with the
@@ -415,6 +455,8 @@ def compile_storyboard_minimax(global_prompt, shots, soundscape="", music="",
         parts.append("subject_definitions: " + " ".join(subject_lines))
     if wardrobe_lines:
         parts.append("wardrobe_definitions: " + " ".join(wardrobe_lines))
+    if location_lines:
+        parts.append("location_definitions: " + " ".join(location_lines))
     if retention_lines:
         parts.append("retention_analysis: " + " ".join(retention_lines))
 
@@ -587,6 +629,8 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                       if isinstance(item, dict)]
     wardrobe_collages = [collage for collage in (tdata.get("wardrobe_collages", []) or [])
                          if isinstance(collage, dict)]
+    location_references = [location for location in (tdata.get("location_references", []) or [])
+                           if isinstance(location, dict)]
     # Keep old item-level payloads working. New Wardrobe Director payloads use a
     # per-character collage and keep this material in its own prompt section instead.
     if not wardrobe_collages:
@@ -700,6 +744,16 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                     continue
                 ref_image_slots.append({"source": "wardrobe", "slot": character_slot,
                                         "image": img, "description": collage.get("description", "")})
+
+        for location_index, location in enumerate(location_references):
+            if len(ref_image_slots) >= MAX_REF_IMAGES:
+                break
+            images = location.get("images") if isinstance(location.get("images"), list) else []
+            for img in images[:1]:
+                if not isinstance(img, dict) or not (img.get("name") or img.get("b64")):
+                    continue
+                ref_image_slots.append({"source": "location", "location_index": location_index,
+                                        "image": img, "description": location.get("description", "")})
 
         for _ in range(max(0, int(extra_ref_image_count))):
             if len(ref_image_slots) >= MAX_REF_IMAGES:
@@ -829,12 +883,13 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
     actual_seconds = length / MODEL_FPS
 
     # --- prompt ---
-    subject_lines, subject_of_slot, wardrobe_lines = [], {}, []
+    subject_lines, subject_of_slot, wardrobe_lines, location_lines = [], {}, [], []
     if ref_mode_on and prompt_format == FORMAT_MINIMAX:
         subject_lines, subject_of_slot = build_subject_definitions(
             char_slots, ref_image_slots, ref_video_segs, ref_audio_segs)
         wardrobe_lines = build_wardrobe_definitions(
             wardrobe_collages, ref_image_slots, subject_of_slot, char_slots)
+        location_lines = build_location_definitions(location_references, ref_image_slots)
         # a named subject beats a bare picture label: it survives across cuts
         for slot, subject in subject_of_slot.items():
             char_tag_values[slot] = "<Subject %d>" % subject
@@ -887,8 +942,8 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                 any(e["role"] == ROLE_LAST for e in events),
                 written_shots, actual_seconds)
         prompt = compile_storyboard_minimax(global_prompt, shots, soundscape, music,
-                                            subject_lines, wardrobe_lines,
-                                            retention_lines, instruction)
+                                            subject_lines, wardrobe_lines, retention_lines,
+                                            instruction, location_lines)
     else:
         prompt = compile_storyboard(global_prompt, shots, window_seconds)
         if ref_notes:
@@ -913,6 +968,7 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         "ref_video_segs": ref_video_segs, "ref_audio_segs": ref_audio_segs,
         "ref_warnings": ref_warnings, "prompt_format": prompt_format,
         "char_tag_values": char_tag_values,
+        "location_lines": location_lines,
         "win_start": win_start, "duration_frames": duration_frames, "fps": fps,
         "window_seconds": window_seconds,
         "length": length, "actual_seconds": actual_seconds,

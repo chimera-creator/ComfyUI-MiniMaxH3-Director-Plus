@@ -22,6 +22,7 @@ import folder_paths
 PROJECTS_DIR = os.path.join(os.path.dirname(__file__), "Projects")
 PROJECT_SCHEMA_VERSION = 1
 _PROJECT_NAME_RE = re.compile(r"[^A-Za-z0-9._ -]+")
+_PROJECT_FOLDERS = {"wardrobe", "sets"}
 _RESOURCE_KEYS = {
     "name", "filename", "file", "file_name", "fileName",
     "imageFile", "videoFile", "audioFile", "image_file", "video_file", "audio_file",
@@ -55,6 +56,13 @@ def _project_dir(project_name: str) -> str:
 
 def _project_file(project_name: str) -> str:
     return os.path.join(_project_dir(project_name), "wardrobe", "project.json")
+
+
+def _normalise_folder(value: str) -> str:
+    folder = str(value or "wardrobe").strip().lower()
+    if folder not in _PROJECT_FOLDERS:
+        raise ValueError("Invalid project folder.")
+    return folder
 
 
 def _empty_document(project_name: str) -> dict:
@@ -156,8 +164,8 @@ def _resolve_input_reference(reference: str) -> str | None:
     return None
 
 
-def _copy_resources(project_dir: str, references: list[str]) -> list[dict]:
-    resource_dir = os.path.join(project_dir, "wardrobe", "resources")
+def _copy_resources(project_dir: str, folder: str, references: list[str]) -> list[dict]:
+    resource_dir = os.path.join(project_dir, folder, "resources")
     os.makedirs(resource_dir, exist_ok=True)
     copied = []
     for reference in references:
@@ -180,14 +188,28 @@ def _copy_resources(project_dir: str, references: list[str]) -> list[dict]:
         shutil.copy2(source, destination)
         copied.append({
             "original": reference,
-            "stored": "resources/%s" % destination_name,
+            "stored": "%s/resources/%s" % (folder, destination_name),
             "size": os.path.getsize(destination),
         })
     return copied
 
 
-def save_project(project_name: str, source: str, data, resource_refs=None) -> dict:
+def _write_json_atomic(path: str, document: dict, directory: str):
+    fd, temporary = tempfile.mkstemp(prefix=".project-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(document, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def save_project(project_name: str, source: str, data, resource_refs=None,
+                 folder="wardrobe") -> dict:
     safe_name = normalise_project_name(project_name)
+    folder = _normalise_folder(folder)
     source = str(source or "").strip().lower()
     if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,39}", source):
         raise ValueError("Invalid project source.")
@@ -195,14 +217,15 @@ def save_project(project_name: str, source: str, data, resource_refs=None) -> di
         raise ValueError("Project source data must be an object.")
 
     project_dir = _project_dir(safe_name)
-    os.makedirs(os.path.join(project_dir, "wardrobe"), exist_ok=True)
+    folder_dir = os.path.join(project_dir, folder)
+    os.makedirs(folder_dir, exist_ok=True)
     document = load_project(safe_name) or _empty_document(safe_name)
     document["schema_version"] = PROJECT_SCHEMA_VERSION
     document["project_name"] = safe_name
     document.setdefault("sources", {})[source] = data
 
     references = list(resource_refs or []) + collect_resource_refs(data)
-    copied = _copy_resources(project_dir, references)
+    copied = _copy_resources(project_dir, folder, references)
     existing = {item.get("original"): item for item in (document.get("resources") or [])
                 if isinstance(item, dict) and item.get("original")}
     for item in copied:
@@ -211,14 +234,17 @@ def save_project(project_name: str, source: str, data, resource_refs=None) -> di
     document["updated_at"] = _timestamp()
 
     project_path = _project_file(safe_name)
-    wardrobe_dir = os.path.join(project_dir, "wardrobe")
-    fd, temporary = tempfile.mkstemp(prefix=".project-", suffix=".json", dir=wardrobe_dir)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(document, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
-        os.replace(temporary, project_path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    os.makedirs(os.path.dirname(project_path), exist_ok=True)
+    _write_json_atomic(project_path, document, os.path.dirname(project_path))
+    _write_json_atomic(
+        os.path.join(folder_dir, "%s.json" % source),
+        {
+            "schema_version": PROJECT_SCHEMA_VERSION,
+            "project_name": safe_name,
+            "source": source,
+            "updated_at": document["updated_at"],
+            "data": data,
+        },
+        folder_dir,
+    )
     return document

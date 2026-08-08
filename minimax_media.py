@@ -498,6 +498,52 @@ def _parse_wardrobe_item_analysis(text):
     return {"description": description}
 
 
+_LOCATION_ITEM_ANALYZE_SYSTEM_PROMPT = (
+    "You analyze location and set reference images for a video prompt. Return only one "
+    "valid JSON object, with no markdown, code fences, or commentary. The object must "
+    "contain exactly one string key: description. Describe only the visible place or set: "
+    "architecture, layout, surfaces, furniture, props, landscape, lighting, weather, and "
+    "distinctive spatial details. Do not describe a person, clothing, action, or imagined "
+    "story. Use a concise noun phrase beginning with an article such as 'a' or 'an'."
+)
+
+_LOCATION_ITEM_ANALYZE_PROMPT = (
+    "Describe the location or set shown in the supplied reference image. Return the JSON "
+    "object exactly as instructed."
+)
+
+
+def _parse_location_item_analysis(text):
+    """Parse a location item's concise JSON description."""
+    text = strip_thinking(text).strip()
+    candidates = [text]
+    if "```" in text:
+        candidates.append(text.replace("```json", "").replace("```JSON", "")
+                         .replace("```", "").strip())
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+
+    parsed = None
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict):
+            parsed = value
+            break
+    if parsed is None:
+        raise VLMError("Analyze returned invalid JSON. Ask the vision model to return only "
+                        "an object with a description field.")
+
+    description = str(parsed.get("description") or "").strip()
+    if not description:
+        raise VLMError("Analyze returned an empty location description.")
+    return {"description": description}
+
+
 def normalize_base_url(url, fallback=""):
     """Make a typed-in address usable.
 
@@ -719,6 +765,46 @@ async def analyze_wardrobe_item_endpoint(request):
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
+@PromptServer.instance.routes.post("/minimax_director/analyze_location")
+async def analyze_location_endpoint(request):
+    try:
+        data = await request.json()
+        image_b64 = data.get("image_b64", "")
+        item_index = int(data.get("item_index", 0))
+        api_key = str(data.get("api_key") or "").strip()
+        provider, base_url, model_name = _resolve_provider(data)
+
+        if provider == "off":
+            return web.json_response({"status": "error", "message": "Analyze is set to Off / Manual."})
+        if not image_b64:
+            return web.json_response({"status": "error", "message": "No image provided for analysis."})
+
+        b64_list = image_b64 if isinstance(image_b64, list) else [image_b64]
+        cleaned = [b.split(",", 1)[1] if "," in b else b for b in b64_list]
+        if not cleaned:
+            return web.json_response({"status": "error", "message": "No valid base64 image decoded."})
+
+        log.info("[MiniMaxDirector] Analyzing location %d via %s (%s, model '%s')...",
+                 item_index + 1, provider, base_url, model_name)
+        try:
+            generated_text = await vlm_generate(
+                cleaned, _LOCATION_ITEM_ANALYZE_PROMPT, provider, base_url, model_name,
+                system_prompt=_LOCATION_ITEM_ANALYZE_SYSTEM_PROMPT,
+                api_key=api_key, max_tokens=256)
+        except VLMError as e:
+            return web.json_response({"status": "error", "message": str(e)})
+
+        try:
+            analysis = _parse_location_item_analysis(generated_text)
+        except VLMError as e:
+            return web.json_response({"status": "error", "message": str(e)})
+
+        return web.json_response({"status": "success", **analysis})
+    except Exception as e:
+        log.error("[MiniMaxDirector] Failed to analyze location: %s", e)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.get("/minimax_director/projects")
 async def list_projects_endpoint(request):
     """List saved project folders without exposing absolute filesystem paths."""
@@ -753,7 +839,7 @@ async def save_project_endpoint(request):
         data = await request.json()
         document = save_project(
             data.get("project"), data.get("source"), data.get("data", {}),
-            data.get("resource_refs"),
+            data.get("resource_refs"), data.get("folder", "wardrobe"),
         )
         return web.json_response({"status": "success", "project": document})
     except ValueError as e:

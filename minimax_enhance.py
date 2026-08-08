@@ -395,6 +395,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                 io.String.Input("idea", multiline=True, default="",
                                 tooltip="What you want, in plain words. The vision model turns "
                                         "this plus the images into a MiniMax-shaped prompt."),
+                io.String.Input("context", multiline=True, default="", optional=True,
+                                tooltip="Structured cast, wardrobe, and location context from "
+                                        "a Scout or Director node."),
                 io.Combo.Input("preset", options=[PRESET_GLOBAL, PRESET_STORYBOARD],
                                default=PRESET_GLOBAL,
                                tooltip="'global' writes scene, style, subjects and lighting and "
@@ -476,7 +479,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                       duration_seconds=5.0, provider="ollama", base_url="", model="", api_key="",
                       use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
-                      on_error="passthrough") -> io.NodeOutput:
+                      on_error="passthrough", context="") -> io.NodeOutput:
         tensors = _collect(images)
         if len(tensors) > MAX_IMAGES:
             log.warning("[MiniMaxEnhance] %d images connected, MiniMax H3 takes at most %d — "
@@ -506,6 +509,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         system = (system_prompt or "").strip() or system_for(preset, max_words)
 
         user = (idea or "").strip() or "Describe what these images show as a video."
+        context = (context or "").strip()
+        if context:
+            user = context + "\n\n" + user
         if preset == PRESET_STORYBOARD:
             user = "%s\n\nTarget duration: %.1f seconds." % (user, float(duration_seconds))
         # Recency matters more than instruction count for small models: without this
