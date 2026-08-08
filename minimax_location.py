@@ -10,7 +10,7 @@ from PIL import Image, ImageOps
 
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
 from .minimax_context import MiniMaxH3Context, load_reference_image, make_context, project_details
-from .minimax_projects import project_source_data
+from .minimax_projects import project_source_data, save_project
 
 
 MAX_LOCATION_ITEMS = 18
@@ -222,7 +222,7 @@ class MiniMaxH3LocationScout(io.ComfyNode):
     @classmethod
     def execute(cls, cast_wardrobe="", analyze_settings="", sets_data="", project="") -> io.NodeOutput:
         saved = project_source_data(project, "sets")
-        if isinstance(saved, dict):
+        if not sets_data and isinstance(saved, dict):
             saved_sets = saved.get("sets_data")
             if not saved_sets and isinstance(saved.get("widgets"), dict):
                 saved_sets = saved["widgets"].get("sets_data")
@@ -260,6 +260,20 @@ class MiniMaxH3LocationScout(io.ComfyNode):
                 "description": entry.get("description", ""),
             } for entry in entries],
         )
+        if project_info.get("path") and project_info.get("name"):
+            try:
+                save_project(
+                    project_info["name"], "sets",
+                    {
+                        "sets_data": json.dumps({"version": 1, "items": items}, separators=(",", ":")),
+                        "items": items,
+                        "cast_wardrobe": cast_wardrobe,
+                        "metadata": {"locations": len([item for item in items if item.get("images")])},
+                    },
+                    folder="Sets", project_path=project_info["path"],
+                )
+            except Exception:
+                pass
         return io.NodeOutput(
             json.dumps(payload, separators=(",", ":")),
             prompt_context,

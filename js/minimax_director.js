@@ -13343,7 +13343,7 @@ app.registerExtension({
           };
           const refreshProjectList = async () => {
             try {
-              const projects = await mmxdFetchProjects();
+              const projects = await mmxdFetchProjects(projectRootForNode());
               renderProjectOptions(projects);
               if (node.properties?.project_name) {
                 setProjectMessage(`Project: ${node.properties.project_name}`);
@@ -13392,9 +13392,19 @@ app.registerExtension({
             const type = String(source?.comfyClass || source?.type || "").toLowerCase();
             return type.includes("enhance") ? source : null;
           };
-          const projectPathForNode = () => {
+          const projectConfigForNode = () => {
             const source = originForInput(node, "project");
-            return String(source?.properties?.project_path || node.properties?.project_path || "").trim();
+            return {
+              path: String(source?.properties?.project_path || node.properties?.project_path || "").trim(),
+              root: String(source?.properties?.projects_path || source?.properties?.project_root ||
+                node.properties?.projects_path || node.properties?.project_root || "").trim(),
+            };
+          };
+          const projectPathForNode = () => {
+            return projectConfigForNode().path;
+          };
+          const projectRootForNode = () => {
+            return projectConfigForNode().root;
           };
           const saveProject = async () => {
             const project = String(projectNameInput.value || "").trim();

@@ -179,6 +179,26 @@ app.registerExtension({
       };
 
       let cast = parseCast(castWidget?.value || "");
+      let projectSaveTimer = null;
+      const queueProjectSave = (serialized) => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
+        const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
+        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
+        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        if (!project || (!path && !projectsPath)) return;
+        clearTimeout(projectSaveTimer);
+        projectSaveTimer = setTimeout(async () => {
+          try {
+            await api.fetchApi("/minimax_director/projects/save", {
+              method: "POST",
+              body: JSON.stringify({ project, source: "casting", folder: "Cast", path,
+                projects_path: projectsPath, data: { cast_data: serialized, characters: cast.characters } }),
+            });
+          } catch (error) { console.warn("[MiniMaxCastingDirector] project save failed", error); }
+        }, 500);
+      };
 
       const save = () => {
         const serialized = JSON.stringify(cast);
@@ -189,6 +209,7 @@ app.registerExtension({
         node.properties = { ...(node.properties || {}), cast_data: serialized };
         node.properties.analyze_settings_output = analyzeSettingsPayload(cast);
         node._castingData = serialized;
+        queueProjectSave(serialized);
         node._widgetSlotsDirty = true;
         node.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
@@ -545,7 +566,7 @@ app.registerExtension({
         const required = node.computeSize?.()?.[1] || 0;
         if (required > (node.size?.[1] || 0)) node.setSize?.([node.size[0], required]);
       };
-      const refreshFromProject = async (projectName, projectPath = "") => {
+      const refreshFromProject = async (projectName, projectPath = "", projectsPath = "") => {
         const project = String(projectName || "").trim();
         if (!project) return;
         try {
@@ -563,7 +584,8 @@ app.registerExtension({
           }
           node._castingData = JSON.stringify(cast);
           node.properties = { ...(node.properties || {}), project_name: project,
-            project_path: String(result.project?.project_path || projectPath || "") };
+            project_path: String(result.project?.project_path || projectPath || ""),
+            projects_path: String(result.project?.projects_path || projectsPath || "") };
           refreshSettings();
           renderSlots();
           save();
@@ -581,7 +603,8 @@ app.registerExtension({
         const input = node.inputs?.find((item) => item.name === "project");
         const link = input?.link != null ? app.graph?.links?.[input.link] : null;
         const source = link ? app.graph?.getNodeById(link.origin_id) : null;
-        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name, source.properties.project_path || "");
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name,
+          source.properties.project_path || "", source.properties.projects_path || source.properties.project_root || "");
       }, 150);
     };
 
@@ -590,6 +613,17 @@ app.registerExtension({
       const result = originalConfigure?.apply(this, arguments);
       setTimeout(() => this._castingRefresh?.(), 0);
       setTimeout(() => this._castingRefresh?.(), 100);
+      return result;
+    };
+    const originalConnectionsChange = nodeType.prototype.onConnectionsChange;
+    nodeType.prototype.onConnectionsChange = function () {
+      const result = originalConnectionsChange?.apply(this, arguments);
+      const input = this.inputs?.find((item) => item.name === "project");
+      const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+      const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+      if (source?.properties?.project_name) void this._mmxProjectRefresh?.(
+        source.properties.project_name, source.properties.project_path || "",
+        source.properties.projects_path || source.properties.project_root || "");
       return result;
     };
 

@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
 from .minimax_context import MiniMaxH3Context, load_reference_image, make_context, project_details
-from .minimax_projects import project_source_data
+from .minimax_projects import project_source_data, save_project
 
 MAX_WARDROBE_ITEMS = 18
 COLLAGE_TILE = 256
@@ -324,6 +324,20 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
             sources={"cast_wardrobe": payload},
             references=references,
         )
+        if project.get("path") and project.get("name"):
+            try:
+                save_project(
+                    project["name"], "wardrobe",
+                    {
+                        "wardrobe_data": json.dumps({"version": 1, "items": items}, separators=(",", ":")),
+                        "items": items,
+                        "cast_wardrobe": cast_wardrobe_json,
+                        "metadata": {"categories": list(WARDROBE_CATEGORIES)},
+                    },
+                    folder="Wardrobe", project_path=project["path"],
+                )
+            except Exception:
+                pass
         return io.NodeOutput(cast_wardrobe_json, _wardrobe_context(payload), context_data)
 
 

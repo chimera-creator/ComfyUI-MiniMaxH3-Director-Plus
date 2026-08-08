@@ -92,10 +92,10 @@ Eight nodes, category **MiniMax H3**:
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
-| **MiniMax H3 Director Project Plus** | Select or create a named project, browse to an external project folder for loading/saving, and emit its shared project-data payload. Connect `PROJECT DATA` to the optional `project` inputs on Casting Director, Wardrobe Director, Location Scout, and Director. |
+| **MiniMax H3 Director Project Plus** | Browse for a Projects root, create or load a named project folder below it, and emit shared project configuration. Connect `PROJECT DATA` to Casting Director, Wardrobe Director, Location Scout, or Director. |
 | **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. Its `ANALYZE SETTINGS` output can connect to Wardrobe Director for item analysis, and `CONTEXT DATA` can feed Enhance Prompt directly. |
 | **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` and optionally `ANALYZE SETTINGS` from Casting Director, then connect its output to the Director's `cast` input or use its `CONTEXT DATA` output for Enhance Prompt. |
-| **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Its typed `CONTEXT DATA` output also carries project asset paths. Saves set data under `Projects/<project>/sets/`. |
+| **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Its typed `CONTEXT DATA` output also carries project asset paths and saves Sets data to the connected project. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
 | **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images and emits Director-ready JSON for duration, shots, guide fields, and ordered H3 references. |
@@ -275,12 +275,12 @@ The Director can still be used by itself. External cast, wardrobe, location, and
 connections are optional; unconnected Director character slots, timeline prompts, and
 manual sound fields remain available.
 
-The Project node creates the `Projects/<project>/` folder on demand and emits the master
-project JSON. Use **BROWSE** to choose an existing project folder or an empty folder for a
-new project; the selected path is stored in `PROJECT DATA`, so connected authoring nodes and
-Director saves use the same location. Connected authoring nodes use the matching saved source
-when one exists, so the same project selection can restore cast, wardrobe, sets, and Director
-timeline data. Folder browsing opens a native picker on the machine running ComfyUI.
+The Project node browses for a **Projects root folder**, then creates or loads a named
+`<Projects root>/<project>/` folder and emits the complete project configuration. Connected
+Casting, Wardrobe, Location Scout, and Director nodes inherit that configuration; their local
+project dropdowns are not needed. Updating the Project node broadcasts the selected project
+to directly connected authoring nodes, which reload their saved source data automatically.
+Folder browsing opens a native picker on the machine running ComfyUI.
 
 | Track | Drop this | Becomes |
 |---|---|---|
@@ -432,9 +432,9 @@ description analysis.
 
 Wardrobe items also have a category dropdown: **Full Outfits**, **Tops**, **Bottoms**,
 **Accessories**, or **Anatomy**. Use Anatomy for close-up references of distinctive body
-parts. Both the Wardrobe Director and the main Director can save to a named project. Project
-data is merged into `Projects/<project>/wardrobe/project.json`, with referenced input assets
-copied into `Projects/<project>/wardrobe/resources/`. A Director save includes the compiled
+parts. Wardrobe data is stored in the connected project automatically. Project data is merged
+into the project root `project.json`; item metadata and images are split into their category
+folders. A Director save includes the compiled
 prompt, timeline, render metadata, cast/wardrobe connections, and connected enhanced-prompt
 settings; later saves from the connected nodes update their source sections in the same file.
 
@@ -442,8 +442,8 @@ The **MiniMax H3 Location Scout Plus** has eighteen set slots with a three-row s
 grid. Connect `CAST + WARDROBE` from Wardrobe Director and `ANALYZE SETTINGS` from Casting
 Director. Each uploaded image is shown with its ordered `<image N>` tag; the node emits the
 combined images and typed context data for Enhance Prompt, plus a `CAST + WARDROBE + SETS` JSON
-socket for the Director. Save Sets writes `Projects/<project>/sets/sets.json` and copies
-referenced assets into `Projects/<project>/sets/resources/`.
+socket for the Director. Save Sets writes the connected project's `Sets/sets.json` and copies
+referenced location assets into `Sets/images/`.
 
 Location images are ordered after the cast and wardrobe images. The visible `<image N>`
 label is the order supplied to Enhance Prompt, while the Director converts the same
@@ -457,17 +457,24 @@ warnings rather than silently ignored.
 
 ## Projects and saved data
 
-The **Director Project Plus** node provides the shared project selector and creator. The
-Director, Wardrobe Director, and Location Scout retain their local save controls for source
-snapshots. Projects are named folders inside the node directory:
+The **Director Project Plus** node provides the shared Projects-root browser and project
+creator. Connected authoring nodes inherit the selected project and persist their source data
+as it is edited and when it executes; they no longer need their own project selectors. Projects are named folders
+below the chosen root:
 
 ```
-Projects/<project>/
-  wardrobe/project.json       # merged project index
-  wardrobe/<source>.json      # casting, wardrobe, director, or enhanced_prompt source
-  wardrobe/resources/         # copied cast, wardrobe, and Director assets
-  sets/sets.json              # Location Scout source
-  sets/resources/             # copied location/set assets
+<Projects root>/<project>/
+  project.json                 # merged project configuration and source index
+  Cast/casting.json            # cast images and pronouns/appearance/wardrobe metadata
+  Cast/images/                 # copied cast references
+  Wardrobe/Full Outfits/       # item metadata and images
+  Wardrobe/Tops/               # item metadata and images
+  Wardrobe/Bottoms/            # item metadata and images
+  Wardrobe/Accessories/        # item metadata and images
+  Wardrobe/Anatomy/            # item metadata and images
+  Sets/sets.json               # Location Scout descriptions and references
+  Sets/images/                 # copied location/set references
+  Director/                    # Director and enhanced-prompt source snapshots
 ```
 
 The Director save captures the compiled prompt, prompt metadata, timeline, resolution,
@@ -478,10 +485,10 @@ cast passthrough data. Location Scout saves its set descriptions and references 
 of deleting the other sources.
 
 Project names are sanitized before becoming folders. Uploaded assets are copied from
-ComfyUI's input area into the relevant project resource folder when they are available;
-the workflow data still retains the original ComfyUI reference. The typed Enhance Prompt
-context includes the project path, resource manifest, and wardrobe/set resource roots, so
-saved references can be resolved after the original input files are no longer present.
+ComfyUI's input area into the relevant project folder when they are available; the workflow
+data still retains the original ComfyUI reference. The typed Enhance Prompt context includes
+the project path, Projects root, resource manifest, and wardrobe/set roots, so saved references
+can be resolved after the original input files are no longer present.
 
 ## Prompt format
 

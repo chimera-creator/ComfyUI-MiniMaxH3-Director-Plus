@@ -284,10 +284,32 @@ app.registerExtension({
         } catch (error) { alert("Location Analysis Error: " + (error.message || error)); button.classList.remove("loading"); button.textContent = "ANALYZE"; }
       };
 
+      let projectSaveTimer = null;
+      const queueProjectSave = (serialized) => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
+        const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
+        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
+        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        if (!project || (!path && !projectsPath)) return;
+        clearTimeout(projectSaveTimer);
+        projectSaveTimer = setTimeout(async () => {
+          try {
+            await api.fetchApi("/minimax_director/projects/save", {
+              method: "POST",
+              body: JSON.stringify({ project, source: "sets", folder: "Sets", path,
+                projects_path: projectsPath, data: { sets_data: serialized, items: sets.items } }),
+            });
+          } catch (error) { console.warn("[MiniMaxLocationScout] project save failed", error); }
+        }, 500);
+      };
+
       const save = () => {
         const serialized = JSON.stringify(sets);
         if (setsWidget) { setsWidget.value = serialized; if (setsWidget.element) setsWidget.element.value = serialized; }
         node.properties = { ...(node.properties || {}), sets_data: serialized };
+        queueProjectSave(serialized);
         node.setDirtyCanvas?.(true, true); app.graph?.setDirtyCanvas?.(true, true);
       };
 
@@ -352,20 +374,14 @@ app.registerExtension({
         }
       };
 
-      const projectRow = document.createElement("div"); projectRow.className = "mmxd-location-projects";
-      const projectLabel = document.createElement("label"); projectLabel.textContent = "Project"; projectRow.appendChild(projectLabel);
-      projectSelect = document.createElement("select"); projectSelect.className = "mmxd-location-project-select"; projectSelect.addEventListener("change", loadSelectedProject); projectRow.appendChild(projectSelect);
-      projectNameInput = document.createElement("input"); projectNameInput.className = "mmxd-location-project-name"; projectNameInput.placeholder = "New project name"; projectRow.appendChild(projectNameInput);
-      const refresh = document.createElement("button"); refresh.className = "mmxd-location-project-button"; refresh.textContent = "REFRESH"; refresh.addEventListener("click", refreshProjects); projectRow.appendChild(refresh);
-      const saveProject = document.createElement("button"); saveProject.className = "mmxd-location-project-button"; saveProject.textContent = "SAVE SETS"; saveProject.addEventListener("click", saveProjectSnapshot); projectRow.appendChild(saveProject);
-      container.appendChild(projectRow);
       status = document.createElement("div"); status.className = "mmxd-location-status"; container.appendChild(status);
+      status.textContent = "Project is inherited from the connected Director Project node.";
       itemsContainer = document.createElement("div"); itemsContainer.className = "mmxd-location-items"; container.appendChild(itemsContainer);
-      const refreshFromProject = async (projectName, projectPath = "") => {
+      const refreshFromProject = async (projectName, projectPath = "", projectsPath = "") => {
         const project = String(projectName || "").trim();
         if (!project) return;
         try {
-          const document = await loadProject(project, projectPath);
+          const document = await loadProject(project, projectPath || projectsPath);
           const saved = document?.sources?.sets;
           const value = saved?.sets_data || saved?.widgets?.sets_data;
           if (!value) return;
@@ -376,7 +392,8 @@ app.registerExtension({
           }
           selectedProject = project;
           node.properties = { ...(node.properties || {}), project_name: project,
-            project_path: String(document.project_path || projectPath || ""), sets_data: JSON.stringify(sets) };
+            project_path: String(document.project_path || projectPath || ""),
+            projects_path: String(document.projects_path || projectsPath || ""), sets_data: JSON.stringify(sets) };
           if (projectNameInput) projectNameInput.value = project;
           renderItems();
           save();
@@ -386,13 +403,25 @@ app.registerExtension({
         }
       };
       node._mmxProjectRefresh = refreshFromProject;
-      renderItems(); renderProjectOptions(); void refreshProjects();
+      renderItems();
       setTimeout(() => {
         const input = node.inputs?.find((item) => item.name === "project");
         const link = input?.link != null ? app.graph?.links?.[input.link] : null;
         const source = link ? app.graph?.getNodeById(link.origin_id) : null;
-        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name, source.properties.project_path || "");
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name,
+          source.properties.project_path || "", source.properties.projects_path || source.properties.project_root || "");
       }, 150);
+    };
+    const originalConnectionsChange = nodeType.prototype.onConnectionsChange;
+    nodeType.prototype.onConnectionsChange = function () {
+      const result = originalConnectionsChange?.apply(this, arguments);
+      const input = this.inputs?.find((item) => item.name === "project");
+      const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+      const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+      if (source?.properties?.project_name) void this._mmxProjectRefresh?.(
+        source.properties.project_name, source.properties.project_path || "",
+        source.properties.projects_path || source.properties.project_root || "");
+      return result;
     };
   },
 });

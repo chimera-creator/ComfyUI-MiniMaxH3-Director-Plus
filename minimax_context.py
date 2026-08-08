@@ -34,17 +34,25 @@ def project_details(value) -> dict:
     project_path = project_path or str(document.get("path") or "").strip()
     project_name = str(document.get("project_name") or "").strip()
     project_name = project_name or str(document.get("name") or "").strip()
+    projects_path = str(document.get("projects_path") or document.get("project_root") or "").strip()
     asset_roots = []
     if project_path:
         project_path = os.path.abspath(project_path)
+        projects_path = os.path.abspath(os.path.expanduser(projects_path)) if projects_path else os.path.dirname(project_path)
         asset_roots = [
             project_path,
+            os.path.join(project_path, "Cast"),
+            os.path.join(project_path, "Wardrobe"),
+            os.path.join(project_path, "Sets"),
+            # Compatibility roots for projects created before the folder layout change.
             os.path.join(project_path, "wardrobe", "resources"),
             os.path.join(project_path, "sets", "resources"),
-        ]
+    ]
     return {
         "name": project_name,
         "path": project_path,
+        "projects_path": projects_path,
+        "project_root": projects_path,
         "asset_roots": asset_roots,
         "resources": document.get("resources", []) if isinstance(document, dict) else [],
     }

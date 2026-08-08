@@ -824,7 +824,7 @@ def _browse_project_folder():
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
-        selected = filedialog.askdirectory(title="Select MiniMax H3 project folder")
+        selected = filedialog.askdirectory(title="Select MiniMax H3 Projects folder")
         root.destroy()
         return selected or ""
     except Exception as error:
@@ -845,10 +845,11 @@ async def browse_project_folder_endpoint(request):
 
 @PromptServer.instance.routes.get("/minimax_director/projects")
 async def list_projects_endpoint(request):
-    """List saved project folders, including their selected storage paths."""
+    """List named projects below the selected Projects root."""
     try:
         from .minimax_projects import list_projects
-        return web.json_response({"status": "success", "projects": list_projects(request.query.get("path"))})
+        root = request.query.get("projects_path") or request.query.get("root") or request.query.get("path")
+        return web.json_response({"status": "success", "projects": list_projects(root)})
     except Exception as e:
         log.error("[MiniMaxDirector] Failed to list projects: %s", e)
         return web.json_response({"status": "error", "message": str(e)}, status=500)
@@ -860,9 +861,10 @@ async def load_project_endpoint(request):
         from .minimax_projects import load_project, load_project_at_path
         project_name = request.query.get("name", "")
         project_path = request.query.get("path", "")
-        document = load_project_at_path(project_path) if project_path else load_project(project_name)
-        if document is None and project_path and project_name:
-            document = load_project(project_name, project_path)
+        projects_path = request.query.get("projects_path") or request.query.get("root", "")
+        document = load_project_at_path(project_path) if project_path else None
+        if document is None and project_name:
+            document = load_project(project_name, projects_path=projects_path or project_path or None)
         if document is None:
             return web.json_response({"status": "error", "message": "Project not found."}, status=404)
         return web.json_response({"status": "success", "project": document})
@@ -878,7 +880,8 @@ async def create_project_endpoint(request):
     try:
         from .minimax_projects import ensure_project
         data = await request.json()
-        document = ensure_project(data.get("project"), data.get("path"))
+        root = data.get("projects_path") or data.get("root") or data.get("path")
+        document = ensure_project(data.get("project"), projects_path=root)
         return web.json_response({"status": "success", "project": document})
     except ValueError as e:
         return web.json_response({"status": "error", "message": str(e)}, status=400)
@@ -894,7 +897,8 @@ async def save_project_endpoint(request):
         data = await request.json()
         document = save_project(
             data.get("project"), data.get("source"), data.get("data", {}),
-            data.get("resource_refs"), data.get("folder", "wardrobe"), data.get("path"),
+            data.get("resource_refs"), data.get("folder"), data.get("path"),
+            data.get("projects_path") or data.get("root"),
         )
         return web.json_response({"status": "success", "project": document})
     except ValueError as e:

@@ -5,7 +5,7 @@ import json
 from comfy_api.latest import io
 
 from .minimax_context import MiniMaxH3Context, make_context, project_details
-from .minimax_projects import project_source_data
+from .minimax_projects import project_source_data, save_project
 
 MAX_CHARACTERS = 9
 PRONOUN_OPTIONS = ("auto", "he", "she", "they")
@@ -178,7 +178,7 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
     @classmethod
     def execute(cls, cast_data="", project="") -> io.NodeOutput:
         saved = project_source_data(project, "casting")
-        if isinstance(saved, dict):
+        if not cast_data and isinstance(saved, dict):
             saved_cast = saved.get("cast_data")
             if not saved_cast and isinstance(saved.get("widgets"), dict):
                 saved_cast = saved["widgets"].get("cast_data")
@@ -232,6 +232,17 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
             sources={"cast": payload},
             references=references,
         )
+        if project_info.get("path") and project_info.get("name"):
+            try:
+                save_project(
+                    project_info["name"], "casting",
+                    {"cast_data": cast_json, "characters": payload.get("characters", []),
+                     "metadata": {"characters": payload.get("characters", [])}},
+                    folder="Cast", project_path=project_info["path"],
+                )
+            except Exception:
+                # Project persistence must not prevent the cast socket from working.
+                pass
         return io.NodeOutput(cast_json, wardrobe_json, analyze_settings,
                              _cast_context(payload), context_data)
 
