@@ -67,6 +67,8 @@ const CASTING_STYLES = `
   .mmxd-casting-hire-toggle { position:absolute; top:4px; right:4px; z-index:8; background:#252525; color:#888; border:1px solid #444; border-radius:3px; padding:2px 6px; font-size:9px; font-weight:700; cursor:pointer; }
   .mmxd-casting-hire-toggle:hover { color:#fff; border-color:#777; }
   .mmxd-casting-hire-toggle.hired { background:#1a3a2a; color:#4fff8f; border-color:#4fff8f; }
+  .mmxd-casting-remove { position:absolute; left:4px; bottom:4px; z-index:8; background:#252525; color:#b66; border:1px solid #533; border-radius:3px; padding:2px 6px; font-size:9px; font-weight:700; cursor:pointer; }
+  .mmxd-casting-remove:hover { background:#4a2020; color:#ff9999; border-color:#a55; }
   .mmxd-casting-slot:hover { border-color:#666; background:#252525; }
   .mmxd-casting-slot.drag-over { border-color:#4fff8f; background:rgba(79,255,143,.05); }
   .mmxd-casting-label { font-size:10px; font-weight:700; color:#888; text-align:center; margin-bottom:2px; pointer-events:none; }
@@ -360,6 +362,21 @@ app.registerExtension({
             save();
           });
           slot.appendChild(hireToggle);
+
+          const hasMember = character.images.length > 0 || !!String(character.description || "").trim();
+          if (hasMember) {
+            const removeMember = document.createElement("button");
+            removeMember.className = "mmxd-casting-remove";
+            removeMember.textContent = "REMOVE";
+            removeMember.title = "Remove this cast member";
+            removeMember.addEventListener("click", (event) => {
+              event.stopPropagation();
+              cast.characters[index] = emptyCharacter();
+              renderSlots();
+              save();
+            });
+            slot.appendChild(removeMember);
+          }
 
           if (character.images.length) {
             const previews = document.createElement("div");

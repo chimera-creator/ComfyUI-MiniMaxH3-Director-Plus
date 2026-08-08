@@ -9212,7 +9212,11 @@ class TimelineEditor {
       const widget = source?.widgets?.find((item) => item.name === "cast_data");
       const raw = widget?.value || source?.properties?.cast_data || "";
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      return parsed && Array.isArray(parsed.characters) ? parsed : null;
+      if (!parsed || !Array.isArray(parsed.characters)) return null;
+      return {
+        ...parsed,
+        characters: parsed.characters.filter((character) => character?.hired !== false),
+      };
     } catch (_) {
       return null;
     }

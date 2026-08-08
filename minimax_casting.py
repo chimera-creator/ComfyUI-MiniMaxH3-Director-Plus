@@ -96,10 +96,10 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
         payload = {"version": value["version"], "characters": [
             {
                 **character,
-                "images": character["images"] if character.get("hired", True) else [],
-                "description": character["description"] if character.get("hired", True) else "",
+                "hired": True,
             }
             for character in value["characters"]
+            if character.get("hired", True)
         ]}
         return io.NodeOutput(json.dumps(payload, separators=(",", ":")))
 

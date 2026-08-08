@@ -280,8 +280,10 @@ If you want the same cast shared by several Director nodes, use **MiniMax H3 Cas
 Director Plus**. It has the same nine `@char1` … `@char9` slots, up to nine character
 images total, image upload, manual description and Analyze controls. Connect its `CAST`
 output to each Director's `cast` input, then use each slot's **HIRE** toggle to choose
-which characters pass through. An external cast replaces only the Director's character
-slots; the Director's timeline, prompt overrides and sound fields remain independent.
+which characters pass through. Hired characters are compacted in order, so Casting slot 2
+becomes Director slot 1 when slot 1 is not hired. Use **REMOVE** to clear a cast member.
+An external cast replaces only the Director's character slots; the Director's timeline,
+prompt overrides and sound fields remain independent.
 
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the

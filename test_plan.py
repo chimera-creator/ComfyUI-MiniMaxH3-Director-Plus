@@ -225,9 +225,8 @@ inactive_cast = json.dumps({
     ]
 })
 inactive = plan.merge_cast({}, inactive_cast)["characters"]
-check("unhired characters pass no images", inactive[0]["images"], [])
-check("unhired characters pass no description", inactive[0]["description"], "")
-check("hired characters keep their images", inactive[1]["images"][0]["name"], "hired.png")
+check("unhired characters are removed from passthrough", len(inactive), 1)
+check("hired characters compact into the first slot", inactive[0]["images"][0]["name"], "hired.png")
 check_in("the ninth character tag resolves",
          "<Subject 9> steps forward",
          compile(tl([img(0, 144, prompt="@char9 steps forward")], ref_mode="ON",
