@@ -144,6 +144,7 @@ app.registerExtension({
           if (castInput?.link != null) {
             const link = app.graph.links?.[castInput.link];
             if (link?.origin_id === node.id) {
+              other._mmxRefreshCharacterSlots?.();
               other._mmxRefreshPrompt?.();
               other._mmxRefreshReferenceCounter?.();
             }

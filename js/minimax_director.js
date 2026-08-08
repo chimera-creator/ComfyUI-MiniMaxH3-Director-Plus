@@ -657,6 +657,7 @@ const STYLES = `
   /* --- Character reference slots --- */
   .mmxd-characters-container { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 6px; margin-bottom: 4px; box-sizing: border-box; width: 100%; flex-shrink: 0; }
   .mmxd-character-slot { min-width: 0; background: #1e1e1e; border: 1.5px dashed #444; border-radius: 8px; height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 4px; position: relative; cursor: pointer; overflow: hidden; transition: all 0.2s ease; box-sizing: border-box; }
+  .mmxd-character-slot-external { border-style: solid; border-color: #364452; }
   .mmxd-character-slot:hover { border-color: #666; background: #252525; }
   .mmxd-character-slot.drag-over { border-color: #4fff8f; background: rgba(79, 255, 143, 0.05); }
   .mmxd-character-label { font-size: 10px; font-weight: bold; color: #888; margin-bottom: 2px; pointer-events: none; }
@@ -9203,6 +9204,29 @@ class TimelineEditor {
 
   // --- Backend Data Sync ---
   // --- Visual Character Reference Slots ---
+  getConnectedCast() {
+    try {
+      const castInput = this.node?.inputs?.find((input) => input.name === "cast");
+      const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
+      const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+      const widget = source?.widgets?.find((item) => item.name === "cast_data");
+      const raw = widget?.value || source?.properties?.cast_data || "";
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return parsed && Array.isArray(parsed.characters) ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  isExternalCastConnected() {
+    return this.getConnectedCast() !== null;
+  }
+
+  getDisplayedCharacters() {
+    const externalCast = this.getConnectedCast();
+    return externalCast ? externalCast.characters : (this.timeline.characters || []);
+  }
+
   createCharacterSlots(parent) {
     const container = document.createElement("div");
     container.className = "mmxd-characters-container";
@@ -9231,11 +9255,13 @@ class TimelineEditor {
         e.preventDefault();
         e.stopPropagation();
         slot.classList.remove("drag-over");
+        if (this.isExternalCastConnected()) return;
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
           Array.from(e.dataTransfer.files).forEach(f => this.handleCharacterImageUpload(f, i));
         }
       });
       slot.addEventListener("click", (e) => {
+        if (this.isExternalCastConnected()) return;
         if (e.target.closest(".mmxd-character-delete") ||
             e.target.closest(".mmxd-character-validate-btn") ||
             e.target.closest(".mmxd-character-desc")) return;
@@ -9376,10 +9402,13 @@ class TimelineEditor {
       this.timeline.characters = Array.from({ length: MAX_CHARACTERS }, () => ({ images: [], description: "" }));
     }
 
+    const externalCast = this.getConnectedCast();
+    const characters = externalCast ? externalCast.characters : this.timeline.characters;
     for (let i = 0; i < MAX_CHARACTERS; i++) {
       const slot = this.characterSlots[i];
-      const data = this.timeline.characters[i] || { images: [], description: "" };
+      const data = characters[i] || { images: [], description: "" };
       slot.innerHTML = "";
+      slot.classList.toggle("mmxd-character-slot-external", !!externalCast);
 
       if (data.images && data.images.length > 0) {
         const previewsRow = document.createElement("div");
@@ -9397,9 +9426,11 @@ class TimelineEditor {
           const delBtn = document.createElement("button");
           delBtn.className = "mmxd-character-delete";
           delBtn.innerHTML = ICONS.close;
-          delBtn.title = "Delete Image";
+          delBtn.title = externalCast ? "Managed by the connected Casting Director" : "Delete Image";
+          if (externalCast) delBtn.style.display = "none";
           delBtn.addEventListener("click", (e) => {
             e.stopPropagation();
+            if (externalCast) return;
             if (this.timeline.characters[i] && this.timeline.characters[i].images) {
               this.timeline.characters[i].images.splice(imgIdx, 1);
               this.updateCharacterSlotsUI();
@@ -9411,7 +9442,7 @@ class TimelineEditor {
         });
 
         const _provider = this.timeline.analyzeProvider || "ollama";
-        if (_provider !== "off") {
+        if (_provider !== "off" && !externalCast) {
           const valBtn = document.createElement("button");
           valBtn.className = "mmxd-character-validate-btn";
           valBtn.textContent = data.description ? "Re-Analyze" : "Analyze";
@@ -9430,8 +9461,11 @@ class TimelineEditor {
         const descInput = document.createElement("textarea");
         descInput.className = "mmxd-character-desc";
         descInput.value = data.description || "";
-        descInput.placeholder = "manual description...";
+        descInput.placeholder = externalCast ? "Managed by Casting Director" : "manual description...";
+        descInput.readOnly = !!externalCast;
+        if (externalCast) descInput.title = "Edit this character in the connected Casting Director";
         descInput.addEventListener("input", () => {
+          if (externalCast) return;
           this.timeline.characters[i].description = descInput.value;
           this.commitChanges();
         });
@@ -12588,11 +12622,15 @@ app.registerExtension({
         };
 
         const origOnConnectionsChange = this.onConnectionsChange;
+        self._mmxRefreshCharacterSlots = () => {
+          self._timelineEditor?.updateCharacterSlotsUI?.();
+        };
         this.onConnectionsChange = function (type, index, connected, link_info) {
           if (origOnConnectionsChange) {
             origOnConnectionsChange.apply(this, arguments);
           }
           self._syncGlobalPromptFromLink();
+          self._mmxRefreshCharacterSlots?.();
           self._mmxRefreshReferenceCounter?.();
         };
 
