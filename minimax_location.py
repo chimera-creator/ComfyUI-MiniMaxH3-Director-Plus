@@ -221,6 +221,18 @@ class MiniMaxH3LocationScout(io.ComfyNode):
 
     @classmethod
     def execute(cls, cast_wardrobe="", analyze_settings="", sets_data="", project="") -> io.NodeOutput:
+        # Some workflows saved while ComfyUI was reordering optional force-inputs have
+        # the Wardrobe link attached to the sets_data widget slot. The browser extension
+        # migrates that link on load; keep execution backward-compatible as well so the
+        # cast is never silently parsed as a list of locations.
+        if not cast_wardrobe and sets_data:
+            try:
+                legacy_value = json.loads(sets_data) if isinstance(sets_data, str) else sets_data
+            except (TypeError, ValueError):
+                legacy_value = None
+            if isinstance(legacy_value, dict) and isinstance(legacy_value.get("characters"), list):
+                cast_wardrobe = sets_data
+                sets_data = ""
         saved = project_source_data(project, "sets")
         if not sets_data and isinstance(saved, dict):
             saved_sets = saved.get("sets_data")

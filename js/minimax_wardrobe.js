@@ -202,12 +202,12 @@ app.registerExtension({
       const analyzeSettingsInput = node.inputs?.find((input) => input.name === "analyze_settings");
       const wardrobeWidget = node.widgets?.find((widget) => widget.name === "wardrobe_data");
       if (castInput) {
-        castInput.hidden = true;
-        castInput.options = { ...(castInput.options || {}), hidden: true };
+        castInput.hidden = false;
+        castInput.options = { ...(castInput.options || {}), hidden: false };
       }
       if (analyzeSettingsInput) {
-        analyzeSettingsInput.hidden = true;
-        analyzeSettingsInput.options = { ...(analyzeSettingsInput.options || {}), hidden: true };
+        analyzeSettingsInput.hidden = false;
+        analyzeSettingsInput.options = { ...(analyzeSettingsInput.options || {}), hidden: false };
       }
       if (wardrobeWidget) {
         wardrobeWidget.hidden = true;
@@ -406,6 +406,17 @@ app.registerExtension({
           wardrobe_collages: wardrobeCollages });
       };
 
+      const storeOutput = (output) => {
+        if (!output) return null;
+        node.properties = { ...(node.properties || {}), cast_wardrobe_output: output };
+        node._wardrobeOutput = output;
+        node.setDirtyCanvas?.(true, true);
+        app.graph?.setDirtyCanvas?.(true, true);
+        return output;
+      };
+      node._mmxBuildWardrobeOutput = async () => storeOutput(await buildOutput())
+        || node.properties?.cast_wardrobe_output || "";
+
       let projectSaveTimer = null;
       const connectedProjectConfig = () => {
         const input = node.inputs?.find((item) => item.name === "project");
@@ -469,12 +480,8 @@ app.registerExtension({
         node._widgetSlotsDirty = true;
         node.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
-        void buildOutput().then((output) => {
+        void node._mmxBuildWardrobeOutput().then((output) => {
           if (!output) return;
-          node.properties = { ...(node.properties || {}), cast_wardrobe_output: output };
-          node._wardrobeOutput = output;
-          node.setDirtyCanvas?.(true, true);
-          app.graph?.setDirtyCanvas?.(true, true);
           for (const other of app.graph?._nodes || []) {
             const input = other.inputs?.find((item) => item.name === "cast");
             const link = input?.link != null ? app.graph.links?.[input.link] : null;

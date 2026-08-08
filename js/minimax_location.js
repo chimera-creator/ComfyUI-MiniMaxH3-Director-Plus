@@ -33,6 +33,41 @@ function readJson(value) {
   try { return value ? JSON.parse(value) : {}; } catch (_) { return {}; }
 }
 
+function linkedSourceForInput(node, inputName) {
+  const input = node.inputs?.find((item) => item.name === inputName);
+  const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+  return link ? app.graph?.getNodeById(link.origin_id) : null;
+}
+
+function castSourceFor(node) {
+  const direct = linkedSourceForInput(node, "cast_wardrobe");
+  if (direct) return direct;
+  const legacyInput = node.inputs?.find((item) => item.name === "sets_data");
+  const legacyLink = legacyInput?.link != null ? app.graph?.links?.[legacyInput.link] : null;
+  const legacySource = legacyLink ? app.graph?.getNodeById(legacyLink.origin_id) : null;
+  const type = String(legacySource?.comfyClass || legacySource?.type || "").toLowerCase();
+  return type.includes("wardrobe") || type.includes("casting") ? legacySource : null;
+}
+
+function migrateLegacyCastLink(node) {
+  const castInput = node.inputs?.find((item) => item.name === "cast_wardrobe");
+  const legacyInput = node.inputs?.find((item) => item.name === "sets_data");
+  if (!castInput || castInput.link != null || legacyInput?.link == null) return false;
+  const linkId = legacyInput.link;
+  const link = app.graph?.links?.[linkId];
+  const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+  const type = String(source?.comfyClass || source?.type || "").toLowerCase();
+  if (!type.includes("wardrobe") && !type.includes("casting")) return false;
+  legacyInput.link = null;
+  castInput.link = linkId;
+  link.target_slot = node.inputs.indexOf(castInput);
+  node.properties = { ...(node.properties || {}), legacy_cast_link_migrated: true };
+  node.setDirtyCanvas?.(true, true);
+  app.graph?.setDirtyCanvas?.(true, true);
+  console.info("[MiniMaxLocationScout] Moved legacy Wardrobe link to cast_wardrobe input.");
+  return true;
+}
+
 async function fetchProjects() {
   const response = await api.fetchApi("/minimax_director/projects");
   const result = await response.json();
@@ -60,8 +95,7 @@ async function saveProjectSource(project, source, data, folder = "wardrobe", pat
 function sourceCastFor(node) {
   try {
     const input = node.inputs?.find((item) => item.name === "cast_wardrobe");
-    const link = input?.link != null ? app.graph?.links?.[input.link] : null;
-    const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+    const source = castSourceFor(node);
     const raw = source?.properties?.cast_wardrobe_output
       || source?.properties?.cast_data || input?.value || "";
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -183,7 +217,7 @@ app.registerExtension({
       const settingsInput = node.inputs?.find((input) => input.name === "analyze_settings");
       const setsWidget = node.widgets?.find((widget) => widget.name === "sets_data");
       for (const input of [castInput, settingsInput]) {
-        if (input) { input.hidden = true; input.options = { ...(input.options || {}), hidden: true }; }
+        if (input) { input.hidden = false; input.options = { ...(input.options || {}), hidden: false }; }
       }
       if (setsWidget) {
         setsWidget.hidden = true;
@@ -446,6 +480,8 @@ app.registerExtension({
       };
       node._mmxProjectRefresh = refreshFromProject;
       renderItems();
+      setTimeout(() => migrateLegacyCastLink(node), 0);
+      setTimeout(() => migrateLegacyCastLink(node), 100);
       setTimeout(() => {
         const input = node.inputs?.find((item) => item.name === "project");
         const link = input?.link != null ? app.graph?.links?.[input.link] : null;
@@ -454,9 +490,17 @@ app.registerExtension({
           source.properties.project_path || "", source.properties.projects_path || source.properties.project_root || "");
       }, 150);
     };
+    const originalConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+      const result = originalConfigure?.apply(this, arguments);
+      setTimeout(() => migrateLegacyCastLink(this), 0);
+      setTimeout(() => migrateLegacyCastLink(this), 100);
+      return result;
+    };
     const originalConnectionsChange = nodeType.prototype.onConnectionsChange;
     nodeType.prototype.onConnectionsChange = function () {
       const result = originalConnectionsChange?.apply(this, arguments);
+      setTimeout(() => migrateLegacyCastLink(this), 0);
       const input = this.inputs?.find((item) => item.name === "project");
       const link = input?.link != null ? app.graph?.links?.[input.link] : null;
       const source = link ? app.graph?.getNodeById(link.origin_id) : null;

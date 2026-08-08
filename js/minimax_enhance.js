@@ -33,6 +33,27 @@ function linkedNode(node, inputName) {
   return link ? app.graph?.getNodeById(link.origin_id) : null;
 }
 
+function nodeTypeName(node) {
+  return String(node?.comfyClass || node?.type || "").toLowerCase();
+}
+
+function linkedContextNode(node, inputName) {
+  const direct = linkedNode(node, inputName);
+  if (direct) return direct;
+  // Older Location Scout workflows can retain this link on the hidden sets_data
+  // widget after ComfyUI reorders force-input slots. Recover the upstream source;
+  // minimax_location.js also migrates the graph link itself when the workflow loads.
+  if (inputName !== "cast_wardrobe") return null;
+  for (const input of node?.inputs || []) {
+    if (input.name !== "sets_data" || input.link == null) continue;
+    const link = app.graph?.links?.[input.link];
+    const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+    const type = nodeTypeName(source);
+    if (type.includes("wardrobe") || type.includes("casting")) return source;
+  }
+  return null;
+}
+
 function parseJson(value, fallback = null) {
   if (value && typeof value === "object") return value;
   try { return value ? JSON.parse(value) : fallback; } catch (_) { return fallback; }
@@ -124,6 +145,61 @@ function mergeDescription(character) {
   return [appearance, wardrobe].filter(Boolean).join(" ") || String(character?.description || "").trim();
 }
 
+function castPayloadFromNode(source) {
+  if (!source) return {};
+  const raw = source.properties?.cast_data || source.properties?.cast_wardrobe_output
+    || source.widgets?.find((widget) => widget.name === "cast_data")?.value || "";
+  const payload = parseJson(raw, {});
+  return payload && Array.isArray(payload.characters) ? payload : {};
+}
+
+async function wardrobePayloadFromNode(source) {
+  if (!source) return {};
+  let payload = parseJson(source.properties?.cast_wardrobe_output, null);
+  if (typeof source._mmxBuildWardrobeOutput === "function") {
+    try {
+      const fresh = parseJson(await source._mmxBuildWardrobeOutput(), null);
+      if (fresh) payload = fresh;
+    } catch (error) {
+      console.warn("[MiniMaxEnhance] Could not refresh Wardrobe output", error);
+    }
+  }
+  payload = payload && typeof payload === "object" ? payload : {};
+  const cast = castPayloadFromNode(linkedContextNode(source, "cast_wardrobe"));
+  const wardrobeState = parseJson(source.properties?.wardrobe_data
+    || source.widgets?.find((widget) => widget.name === "wardrobe_data")?.value, {});
+  const characters = Array.isArray(payload.characters) && payload.characters.length
+    ? payload.characters
+    : (cast.characters || []).filter((character) => character?.hired !== false);
+  return {
+    ...payload,
+    version: Number(payload.version || 2),
+    characters,
+    wardrobe_items: Array.isArray(payload.wardrobe_items)
+      ? payload.wardrobe_items : (wardrobeState.items || []),
+    wardrobe_collages: Array.isArray(payload.wardrobe_collages)
+      ? payload.wardrobe_collages : [],
+  };
+}
+
+function promptContextFromReferences(refs) {
+  if (!refs.length) return "";
+  const lines = [
+    "Use the supplied cast, wardrobe, and location references when writing the prompt.",
+    "The ordered visual references below use the same numbering as the images sent to the model.",
+  ];
+  for (const reference of refs) {
+    const source = reference.source === "char" || reference.source === "cast"
+      ? `cast character ${reference.character_slot || ""}`.trim()
+      : reference.source === "wardrobe"
+        ? `wardrobe for cast character ${reference.character_slot || ""}`.trim()
+        : reference.source === "location" ? "location/set" : reference.source || "reference";
+    const description = String(reference.description || "").trim();
+    lines.push(`<image ${reference.index}> ${source}${description ? `: ${description}` : ": reference image"}`);
+  }
+  return lines.join("\n");
+}
+
 function castContext(cast, startImage = 0) {
   const characters = Array.isArray(cast?.characters) ? cast.characters : [];
   let imageNumber = startImage;
@@ -181,9 +257,9 @@ function contextFromSource(source, startImage = 0, seen = new Set()) {
   return result;
 }
 
-function contextDataFromSource(source) {
+async function contextDataFromSource(source) {
   if (!source) return null;
-  const type = String(source.comfyClass || source.type || "").toLowerCase();
+  const type = nodeTypeName(source);
   const refs = [];
   const project = {
     name: String(source.properties?.project_name || ""),
@@ -191,7 +267,7 @@ function contextDataFromSource(source) {
     asset_roots: [], resources: [],
   };
   const add = (image, sourceName, characterSlot = null, description = "", locationIndex = null) => {
-    if (!image) return;
+    if (!image || refs.length >= 9) return;
     const index = refs.length + 1;
     refs.push({ index, picture: `<Picture ${index}>`, h3_reference: `<Picture ${index}>`,
       source: sourceName, character_slot: characterSlot, location_index: locationIndex,
@@ -205,14 +281,17 @@ function contextDataFromSource(source) {
   };
   let payload = null;
   if (type.includes("location")) {
-    const wardrobeSource = linkedNode(source, "cast_wardrobe");
-    payload = parseJson(wardrobeSource?.properties?.cast_wardrobe_output, null) ||
-      parseJson(wardrobeSource?.widgets?.find((widget) => widget.name === "cast_wardrobe")?.value, {});
+    const wardrobeSource = linkedContextNode(source, "cast_wardrobe");
+    payload = nodeTypeName(wardrobeSource).includes("wardrobe")
+      ? await wardrobePayloadFromNode(wardrobeSource)
+      : castPayloadFromNode(wardrobeSource);
     addCast(payload);
     (payload?.wardrobe_collages || []).forEach((item) =>
       (item.images || []).slice(0, 1).forEach((image) =>
-        add(image, "wardrobe", item.character_slot, item.description)));
-    const sets = parseJson(source.properties?.sets_data, {});
+        add(image, "wardrobe", item.character_slot,
+          [item.description, item.anatomy_description].filter(Boolean).join(" "))));
+    const sets = parseJson(source.properties?.sets_data
+      || source.widgets?.find((widget) => widget.name === "sets_data")?.value, {});
     (sets?.items || []).forEach((item, index) =>
       (item.images || []).slice(0, 1).forEach((image) =>
         add(image, "location", null, item.description, index)));
@@ -220,19 +299,19 @@ function contextDataFromSource(source) {
       images: item.images || [], description: item.description || "", location_index: index,
     })) };
   } else if (type.includes("wardrobe")) {
-    payload = parseJson(source.properties?.cast_wardrobe_output, null) || {};
+    payload = await wardrobePayloadFromNode(source);
     addCast(payload);
     (payload?.wardrobe_collages || []).forEach((item) =>
       (item.images || []).slice(0, 1).forEach((image) =>
         add(image, "wardrobe", item.character_slot, item.description)));
   } else if (type.includes("casting")) {
-    payload = parseJson(source.properties?.cast_data, null) || {};
+    payload = castPayloadFromNode(source);
     addCast(payload);
   }
-  const context = contextFromSource(source);
+  const promptContext = promptContextFromReferences(refs);
   return {
     version: 1,
-    prompt_context: context.lines.join("\n"),
+    prompt_context: promptContext,
     images: refs.map((item) => item.image),
     references: refs,
     project,
@@ -359,27 +438,48 @@ app.registerExtension({
           const imageValues = [];
           const seenImageSources = new Set();
           const contextDataSource = linkedNode(node, "context_data");
-          if (contextDataSource && !seenImageSources.has(contextDataSource.id)) {
-            seenImageSources.add(contextDataSource.id);
-            for (const value of sourceImageValues(contextDataSource)) {
-              const dataUrl = await asDataUrl(value);
-              if (dataUrl) imageValues.push(dataUrl);
+          const contextInput = node.inputs?.find((input) => input.name === "context");
+          const contextSource = contextDataSource || linkedNode(node, "context");
+          const contextData = await contextDataFromSource(contextSource);
+          if (contextDataSource) seenImageSources.add(contextDataSource.id);
+          if (contextData) {
+            const resolvedReferences = [];
+            for (const reference of contextData.references || []) {
+              if (imageValues.length >= 9) break;
+              const dataUrl = await asDataUrl(reference.image);
+              if (!dataUrl) continue;
+              const index = resolvedReferences.length + 1;
+              imageValues.push(dataUrl);
+              resolvedReferences.push({ ...reference, index, picture: `<Picture ${index}>`,
+                h3_reference: `<Picture ${index}>` });
             }
+            contextData.references = resolvedReferences;
+            contextData.images = resolvedReferences.map((item) => item.image);
+            contextData.prompt_context = promptContextFromReferences(resolvedReferences);
           }
           for (let index = 0; index < 9; index++) {
+            if (imageValues.length >= 9) break;
             const source = sourceForImageInput(node, index);
             if (!source || seenImageSources.has(source.id)) continue;
             seenImageSources.add(source.id);
             for (const value of sourceImageValues(source)) {
+              if (imageValues.length >= 9) break;
               const dataUrl = await asDataUrl(value);
-              if (dataUrl) imageValues.push(dataUrl);
+              if (!dataUrl) continue;
+              imageValues.push(dataUrl);
+              if (contextData) {
+                const refIndex = contextData.references.length + 1;
+                const image = typeof value === "object" ? value : { b64: dataUrl };
+                contextData.references.push({ index: refIndex, picture: `<Picture ${refIndex}>`,
+                  h3_reference: `<Picture ${refIndex}>`, source: "input", image,
+                  description: "" });
+                contextData.images.push(image);
+              }
             }
           }
-          const contextInput = node.inputs?.find((input) => input.name === "context");
-          const contextSource = contextDataSource || linkedNode(node, "context");
-          const sourceContext = contextFromSource(contextSource);
-          const context = sourceContext.lines.join("\n") || String(contextInput?.value || widgetValue(node, "context", "") || "");
-          const contextData = contextDataFromSource(contextSource);
+          if (contextData) contextData.prompt_context = promptContextFromReferences(contextData.references);
+          const sourceContext = contextData?.prompt_context || contextFromSource(contextSource).lines.join("\n");
+          const context = sourceContext || String(contextInput?.value || widgetValue(node, "context", "") || "");
           const response = await api.fetchApi("/minimax_director/enhance/process", {
             method: "POST",
             body: JSON.stringify({

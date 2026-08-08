@@ -293,6 +293,9 @@ def _merge_model_subjects(authoritative, model_value, references):
         return authoritative
     valid_pictures = {int(item.get("index") or 0) for item in references
                       if isinstance(item, dict) and int(item.get("index") or 0) > 0}
+    cast_pictures = {int(item.get("index") or 0) for item in references
+                     if isinstance(item, dict) and item.get("source") in ("char", "cast")
+                     and int(item.get("index") or 0) > 0}
     cast_subjects = [int(value) for value in re.findall(
         r"<Subject\s+(\d+)>", authoritative, re.I)]
     last_cast_subject = max(cast_subjects) if cast_subjects else 0
@@ -306,6 +309,10 @@ def _merge_model_subjects(authoritative, model_value, references):
             continue
         pictures = {int(value) for value in re.findall(r"<Picture\s+(\d+)>", chunk, re.I)}
         if pictures and not pictures.issubset(valid_pictures):
+            continue
+        # A location or wardrobe picture must not be promoted into a character subject.
+        # Cast-generated definitions remain the authority for image-bound subjects.
+        if subject_match and pictures and not pictures.issubset(cast_pictures):
             continue
         if chunk not in authoritative and chunk not in extras:
             extras.append(chunk)
@@ -469,8 +476,14 @@ def _body_from_response(model_data, prose, duration_seconds):
         marker = "[Shot %d] " % number if not shot_parts else \
             "[Shot %d] At %s, " % (number, _shot_time(start))
         shot_parts.append(marker + prompt)
-    body = detailed_description or \
-        "\n\n".join(part for part in (global_prompt, " ".join(shot_parts)) if part)
+    structured_body = "\n\n".join(part for part in
+                                    (global_prompt, " ".join(shot_parts)) if part)
+    # Prefer the model's detailed prose, but do not let a malformed stub such as
+    # "The." hide otherwise valid structured shot prompts in the visible output.
+    if detailed_description and (not shot_parts or len(detailed_description.split()) >= 12):
+        body = detailed_description
+    else:
+        body = structured_body or detailed_description
     if not body:
         body = str(model_data.get("prompt") or prose or "").strip()
     body = _full_text_body(body)
