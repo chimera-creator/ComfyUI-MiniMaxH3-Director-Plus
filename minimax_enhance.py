@@ -25,9 +25,11 @@ from comfy_api.latest import io
 from server import PromptServer
 
 from . import minimax_media as media
-from .minimax_context import normalise_context, reference_tensors, MiniMaxH3Context
+from .minimax_context import (normalise_context, reference_tensors, load_reference_image,
+                              MiniMaxH3Context)
 from .minimax_core import extra
-from .minimax_prompt_data import build_director_payload, extract_audio_music, parse_json
+from .minimax_prompt_data import (build_director_payload, extract_audio_music, parse_json,
+                                  normalise_shots, shots_to_timeline_segments)
 
 log = logging.getLogger(__name__)
 
@@ -529,6 +531,25 @@ def build_full_director_payload(prompt, model_data, duration_seconds, context):
     if character_details:
         payload["subject_definitions"] = character_details
         payload["timeline"]["subject_definitions"] = character_details
+    # The terminal JSON's structured shots are the authoritative timeline hand-off.
+    # Previously only detailed_description was parsed, so a perfectly valid multi-shot
+    # response became one segment whenever that prose omitted literal [Shot N] markers.
+    structured_shots = []
+    if isinstance(model_data, dict):
+        for key in ("shots", "segments", "segment_prompts"):
+            structured_shots = normalise_shots(model_data.get(key), duration_seconds)
+            if structured_shots:
+                break
+    parsed_shots = payload.get("shots") if isinstance(payload.get("shots"), list) else []
+    if structured_shots and len(structured_shots) >= len(parsed_shots):
+        segments = shots_to_timeline_segments(structured_shots)
+        payload["shots"] = structured_shots
+        payload["segments"] = segments
+        payload["timeline"]["segments"] = segments
+    if isinstance(model_data, dict):
+        model_global = str(model_data.get("global_prompt") or "").strip()
+        if model_global:
+            payload["global_prompt"] = model_global
     detailed, _audio, _music = extract_audio_music(prompt)
     payload["detailed_description"] = detailed
     parts = [
@@ -838,6 +859,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                       on_error="passthrough", context="", processed_prompt="",
                       context_data=None, processed_director_json="") -> io.NodeOutput:
         typed_context = normalise_context(context_data)
+        provided_tensors = _collect(images)
         context_has_images = isinstance(context_data, dict) and (
             "image_tensor" in context_data or "images" in context_data
         )
@@ -846,8 +868,14 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         elif context_has_images:
             tensors = reference_tensors(typed_context.get("images"), typed_context,
                                         limit=MAX_IMAGES)
+            expected = min(MAX_IMAGES, len(typed_context.get("images") or []))
+            # The Process endpoint posts browser-decoded tensors as a reliable fallback.
+            # Project/file references can be temporarily unavailable to the backend even
+            # though the browser can display them; do not silently send zero images then.
+            if provided_tensors and len(tensors) != expected and len(provided_tensors) == expected:
+                tensors = provided_tensors
         else:
-            tensors = _collect(images)
+            tensors = provided_tensors
         if not typed_context and tensors:
             typed_context = {
                 "images": [{} for _ in range(min(MAX_IMAGES, len(tensors)))],
@@ -1044,6 +1072,80 @@ def _tensor_from_data_url(value):
     return torch.from_numpy(array).unsqueeze(0)
 
 
+def _materialize_process_references(value, image_values, context_data):
+    """Keep the Process JSON self-sufficient when a source file cannot be reopened.
+
+    Normal Comfy input/project references stay lightweight. Only references that the
+    backend cannot resolve receive the already-posted browser data URL. The same image
+    descriptors are copied into cast, wardrobe, and location records so the Director UI
+    and its fallback pixel loader see the exact ordered images described by the LLM.
+    """
+    data = parse_json(value) or {}
+    references = data.get("references") if isinstance(data.get("references"), list) else []
+    context = normalise_context(context_data)
+    for index, reference in enumerate(references):
+        if not isinstance(reference, dict):
+            continue
+        image = reference.get("image") if isinstance(reference.get("image"), dict) else {}
+        if (index < len(image_values) and image_values[index] and
+                load_reference_image(image, context) is None):
+            image = dict(image)
+            image["b64"] = image_values[index]
+            reference["image"] = image
+    data["references"] = references
+    data["reference_images"] = references
+
+    cast = data.get("cast") if isinstance(data.get("cast"), dict) else None
+    if cast is not None:
+        char_images = {}
+        wardrobe_images = {}
+        location_images = {}
+        for reference in references:
+            if not isinstance(reference, dict) or not isinstance(reference.get("image"), dict):
+                continue
+            source = str(reference.get("source") or "input").lower()
+            try:
+                character_slot = int(reference.get("character_slot", 0) or 0)
+            except (TypeError, ValueError):
+                character_slot = 0
+            try:
+                location_index = int(reference.get("location_index", -1))
+            except (TypeError, ValueError):
+                location_index = -1
+            if source in ("char", "cast", "character") and character_slot > 0:
+                char_images.setdefault(character_slot, []).append(reference["image"])
+            elif source == "wardrobe" and character_slot > 0:
+                wardrobe_images.setdefault(character_slot, []).append(reference["image"])
+            elif source in ("location", "set", "sets") and location_index >= 0:
+                location_images.setdefault(location_index, []).append(reference["image"])
+        for slot, images in char_images.items():
+            characters = cast.get("characters") if isinstance(cast.get("characters"), list) else []
+            if slot <= len(characters) and isinstance(characters[slot - 1], dict):
+                characters[slot - 1]["images"] = images
+        for collage in cast.get("wardrobe_collages", []) or []:
+            if not isinstance(collage, dict):
+                continue
+            try:
+                slot = int(collage.get("character_slot", collage.get("slot", 0)) or 0)
+            except (TypeError, ValueError):
+                slot = 0
+            if slot in wardrobe_images:
+                collage["images"] = wardrobe_images[slot][:1]
+        locations = cast.get("location_references")
+        if isinstance(locations, list):
+            for index, location in enumerate(locations):
+                if isinstance(location, dict) and index in location_images:
+                    location["images"] = location_images[index][:1]
+        data["cast"] = cast
+        timeline = data.get("timeline") if isinstance(data.get("timeline"), dict) else {}
+        timeline["characters"] = cast.get("characters", [])
+        timeline["wardrobe_items"] = cast.get("wardrobe_items", [])
+        timeline["wardrobe_collages"] = cast.get("wardrobe_collages", [])
+        timeline["location_references"] = cast.get("location_references", [])
+        data["timeline"] = timeline
+    return json.dumps(data, separators=(",", ":"))
+
+
 @PromptServer.instance.routes.post("/minimax_director/enhance/process")
 async def process_enhance_endpoint(request):
     """Run Enhance Prompt from the node UI and return a prompt to cache in the node.
@@ -1082,8 +1184,10 @@ async def process_enhance_endpoint(request):
             context_data=data.get("context_data"),
             processed_director_json="",
         )
+        director_json = _materialize_process_references(
+            output[3], image_values, data.get("context_data"))
         return web.json_response({"status": "success", "prompt": output[0],
-                                  "director_json": output[3]})
+                                  "director_json": director_json})
     except Exception as error:
         log.exception("[MiniMaxEnhance] Process action failed")
         return web.json_response({"status": "error", "message": str(error)}, status=500)

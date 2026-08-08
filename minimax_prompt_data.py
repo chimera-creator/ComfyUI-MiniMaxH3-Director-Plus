@@ -99,6 +99,130 @@ def parse_shots(prompt, duration_seconds):
     return opening, shots
 
 
+def _seconds(value, default=None):
+    """Parse a model-produced second value, including ``MM:SS.s`` strings."""
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    text = str(value or "").strip().lower().removesuffix("s").strip()
+    if not text:
+        return default
+    try:
+        parts = text.split(":")
+        if len(parts) == 2:
+            return float(parts[0]) * 60.0 + float(parts[1])
+        if len(parts) == 3:
+            return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+    except (TypeError, ValueError):
+        return default
+    return default
+
+
+def normalise_shots(value, duration_seconds):
+    """Normalise an LLM ``shots``/``segments`` list to the Director shot contract.
+
+    Full-reference responses are usually well formed, but OpenAI-compatible models use
+    several harmless variants in practice (``segment_prompt``, ``start_time``, timestamp
+    strings, or plain strings). Keeping that tolerance here prevents a valid multi-shot
+    answer from silently collapsing into one timeline segment.
+    """
+    duration = max(0.1, float(duration_seconds or 0.1))
+    if isinstance(value, dict):
+        value = list(value.values())
+    if not isinstance(value, list):
+        return []
+
+    prepared = []
+    for index, raw in enumerate(value, start=1):
+        if isinstance(raw, str):
+            raw = {"prompt": raw}
+        if not isinstance(raw, dict):
+            continue
+        prompt = str(
+            raw.get("prompt") or raw.get("segment_prompt") or
+            raw.get("description") or raw.get("detailed_description") or
+            raw.get("action") or ""
+        ).strip()
+        if not prompt:
+            continue
+        start = _seconds(raw.get("start", raw.get("start_seconds", raw.get("start_time"))))
+        end = _seconds(raw.get("end", raw.get("end_seconds", raw.get("end_time"))))
+        length = _seconds(raw.get("length", raw.get("duration", raw.get("duration_seconds"))))
+        try:
+            number = int(raw.get("number", raw.get("shot", raw.get("index", index))) or index)
+        except (TypeError, ValueError):
+            number = index
+        prepared.append({"number": number, "prompt": prompt,
+                         "start": start, "end": end, "length": length})
+    if not prepared:
+        return []
+
+    count = len(prepared)
+    has_timing = any(item[key] is not None for item in prepared
+                     for key in ("start", "end", "length"))
+    if not has_timing:
+        step = duration / count
+        for index, item in enumerate(prepared):
+            item["start"] = index * step
+            item["end"] = duration if index + 1 == count else (index + 1) * step
+    else:
+        cursor = 0.0
+        for index, item in enumerate(prepared):
+            start = item["start"] if item["start"] is not None else cursor
+            start = max(cursor, min(duration, start))
+            end = item["end"]
+            if end is None and item["length"] is not None:
+                end = start + max(0.0, item["length"])
+            if end is None and index + 1 < count:
+                end = prepared[index + 1]["start"]
+            if end is None:
+                remaining = count - index
+                end = start + max(0.0, duration - start) / remaining
+            end = max(start, min(duration, end))
+            item["start"], item["end"] = start, end
+            cursor = end
+
+    shots = []
+    for index, item in enumerate(prepared):
+        start = max(0.0, min(duration, float(item["start"] or 0.0)))
+        end = max(start, min(duration, float(item["end"] or start)))
+        if index + 1 < count:
+            next_start = prepared[index + 1].get("start")
+            if next_start is not None:
+                end = max(start, min(duration, float(next_start)))
+        else:
+            end = duration
+        shots.append({
+            "number": int(item["number"] or index + 1),
+            "start": start,
+            "end": end,
+            "length": max(0.0, end - start),
+            "prompt": item["prompt"],
+        })
+    return shots
+
+
+def shots_to_timeline_segments(shots, fps=24.0):
+    """Convert normalized second-based shots to Director pixel-frame segments."""
+    timeline_segments = []
+    for index, shot in enumerate(shots or [], start=1):
+        start = max(0.0, float(shot.get("start", 0.0)))
+        length = max(1, int(round(max(0.0, float(shot.get("length", 0.0))) * fps)))
+        timeline_segments.append({
+            "id": "enhance-shot-%d" % index,
+            "type": "image",
+            "start": int(round(start * fps)),
+            "length": length,
+            "prompt": str(shot.get("prompt") or "").strip(),
+            "fileName": "",
+            "imageFile": "",
+        })
+    return timeline_segments
+
+
 def _source_payload(context):
     sources = context.get("sources") if isinstance(context, dict) else {}
     if not isinstance(sources, dict):
@@ -238,19 +362,7 @@ def build_director_payload(prompt, duration_seconds, context=None, preset=""):
         % ", ".join(subjects) if subjects else ""
 
     fps = 24.0
-    timeline_segments = []
-    for index, shot in enumerate(shots, start=1):
-        start = max(0.0, float(shot.get("start", 0.0)))
-        length = max(1, int(round(max(0.0, float(shot.get("length", 0.0))) * fps)))
-        timeline_segments.append({
-            "id": "enhance-shot-%d" % index,
-            "type": "image",
-            "start": int(round(start * fps)),
-            "length": length,
-            "prompt": str(shot.get("prompt") or "").strip(),
-            "fileName": "",
-            "imageFile": "",
-        })
+    timeline_segments = shots_to_timeline_segments(shots, fps)
 
     duration = max(0.1, float(duration_seconds or 0.1))
     duration_frames = max(1, int(round(duration * fps)))

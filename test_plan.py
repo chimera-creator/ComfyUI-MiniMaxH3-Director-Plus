@@ -22,6 +22,12 @@ plan = importlib.util.module_from_spec(spec)
 sys.modules["minimax_plan"] = plan
 spec.loader.exec_module(plan)
 
+prompt_data_spec = importlib.util.spec_from_file_location(
+    "minimax_prompt_data", os.path.join(HERE, "minimax_prompt_data.py"))
+prompt_data = importlib.util.module_from_spec(prompt_data_spec)
+sys.modules["minimax_prompt_data"] = prompt_data
+prompt_data_spec.loader.exec_module(prompt_data)
+
 FPS = 24.0
 _results = []
 
@@ -68,6 +74,20 @@ check("align_frame_count(96)", plan.align_frame_count(96), 107)
 check("align_frame_count(360)", plan.align_frame_count(360), 362)
 check("align_frame_count is idempotent",
       plan.align_frame_count(plan.align_frame_count(101)), plan.align_frame_count(101))
+
+# ------------------------------------------------------ Enhance structured shot handoff
+structured_shots = prompt_data.normalise_shots([
+    {"number": 1, "start": 0, "end": 2.5, "segment_prompt": "First action"},
+    {"number": 2, "start_time": "00:02.500", "end_time": "00:05.000",
+     "prompt": "Second action"},
+], 5.0)
+check("structured Enhance shots remain separate", len(structured_shots), 2)
+check("structured Enhance segment_prompt alias", structured_shots[0]["prompt"], "First action")
+check("structured Enhance timestamp string", structured_shots[1]["start"], 2.5)
+check("structured Enhance shots cover duration", structured_shots[-1]["end"], 5.0)
+structured_segments = prompt_data.shots_to_timeline_segments(structured_shots)
+check("structured Enhance shots become timeline segments", len(structured_segments), 2)
+check("structured Enhance segment starts at correct frame", structured_segments[1]["start"], 60)
 
 # ---------------------------------------------------------------- fmt_seconds
 check("fmt_seconds(0)", plan.fmt_seconds(0.0), "0s")

@@ -9268,9 +9268,21 @@ class TimelineEditor {
       const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
       const source = link ? app.graph?.getNodeById(link.origin_id) : null;
       const widget = source?.widgets?.find((item) => item.name === "cast_data");
-      const raw = source?.properties?.cast_wardrobe_output
+      let raw = source?.properties?.cast_wardrobe_output
         || widget?.value || source?.properties?.cast_data || "";
-      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      let parsed = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
+      // Enhance JSON carries the complete Location Scout context too. Treat that as an
+      // external cast when no dedicated cast socket is connected so the character and
+      // wardrobe cards show the exact references that will be sent to H3.
+      if (!parsed || !Array.isArray(parsed.characters)) {
+        const enhanceInput = this.node?.inputs?.find((input) => input.name === "enhance_json");
+        const enhanceLink = enhanceInput?.link != null ? app.graph?.links?.[enhanceInput.link] : null;
+        const enhanceSource = enhanceLink ? app.graph?.getNodeById(enhanceLink.origin_id) : null;
+        raw = enhanceSource?.properties?.processed_director_json
+          || enhanceSource?.properties?.director_json || "";
+        const enhanceData = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
+        parsed = enhanceData?.cast || null;
+      }
       if (!parsed || !Array.isArray(parsed.characters)) return null;
       return applyDirectorWardrobeItems({
         ...parsed,
@@ -12780,9 +12792,13 @@ app.registerExtension({
           }
           if (data.cast && Array.isArray(data.cast.characters)) {
             next.characters = data.cast.characters.map((character) => ({
+              ...character,
               images: Array.isArray(character.images) ? character.images : [],
               description: character.description || "",
             }));
+            for (const key of ["wardrobe_items", "wardrobe_collages", "location_references"]) {
+              if (Array.isArray(data.cast[key])) next[key] = data.cast[key];
+            }
           }
           if (data.reference_mode) next.reference_mode = data.reference_mode;
           if (Array.isArray(data.references) && data.references.length) next.reference_mode = "REF2VA";
@@ -12812,6 +12828,8 @@ app.registerExtension({
           editor.loadMedia();
           editor.updateRetakeUIState();
           editor.updateUIFromSelection();
+          editor.updateCharacterSlotsUI?.();
+          editor.updateWardrobeSlotsUI?.();
           editor.syncWidgetsAndUI();
           editor.commitChanges(true);
           self._mmxEnhanceJsonApplied = fingerprint;
@@ -13196,10 +13214,31 @@ app.registerExtension({
               const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
               const source = link ? app.graph?.getNodeById(link.origin_id) : null;
               const widget = source?.widgets?.find(item => item.name === "cast_data");
-              return readJson(source?.properties?.cast_wardrobe_output
+              const direct = readJson(source?.properties?.cast_wardrobe_output
                 || widget?.value || source?.properties?.cast_data || "");
+              if (Array.isArray(direct.characters)) return direct;
+              const enhanceInput = node.inputs?.find(input => input.name === "enhance_json");
+              const enhanceLink = enhanceInput?.link != null ? app.graph?.links?.[enhanceInput.link] : null;
+              const enhanceSource = enhanceLink ? app.graph?.getNodeById(enhanceLink.origin_id) : null;
+              const enhance = readJson(enhanceSource?.properties?.processed_director_json
+                || enhanceSource?.properties?.director_json || "");
+              return enhance.cast && typeof enhance.cast === "object" ? enhance.cast : {};
             } catch (_) {
               return {};
+            }
+          };
+          const readEnhanceForBudget = () => {
+            try {
+              const input = node.inputs?.find(item => item.name === "enhance_json");
+              const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+              const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+              return {
+                source,
+                data: readJson(source?.properties?.processed_director_json
+                  || source?.properties?.director_json || ""),
+              };
+            } catch (_) {
+              return { source: null, data: {} };
             }
           };
           const overlapsBudgetWindow = (segment, start, end) => {
@@ -13227,8 +13266,19 @@ app.registerExtension({
             const locationImages = (Array.isArray(externalCast.location_references)
               ? externalCast.location_references : []).reduce((sum, location) =>
                 sum + (Array.isArray(location?.images) ? location.images.length : 0), 0);
-            const extraImageInput = node.inputs?.some(input =>
-              input.name === "ref_images" && input.link != null) ? 1 : 0;
+            const enhance = readEnhanceForBudget();
+            const manifestCount = Array.isArray(enhance.data.references)
+              ? enhance.data.references.length : 0;
+            const representedByCast = characterImages + wardrobeImages + locationImages;
+            let extraImageInput = Math.max(0, manifestCount - representedByCast);
+            const refInput = node.inputs?.find(input => input.name === "ref_images");
+            const refLink = refInput?.link != null ? app.graph?.links?.[refInput.link] : null;
+            const refSource = refLink ? app.graph?.getNodeById(refLink.origin_id) : null;
+            // A ref_images wire from the same Enhance node is the pixel batch for the
+            // manifest already counted above. A different source is one additional batch
+            // whose cardinality is not knowable in the browser, so count it conservatively.
+            if (refSource && refSource !== enhance.source) extraImageInput += 1;
+            else if (refSource && !manifestCount) extraImageInput += 1;
             const start = Math.max(0, Number(getW("start_frame")?.value ?? timeline.normalStartFrame ?? 0));
             const duration = Math.max(1, Number(getW("duration_frames")?.value ?? timeline.normalDurationFrames ?? 120));
             const end = start + duration;

@@ -635,14 +635,20 @@ with segment prompts and timings, `subject_definitions`, `retention_analysis`,
 `overall_soundscape`, `non_diegetic_music`, the generated prompt, and an ordered
 `references`/`reference_images` manifest using H3's `<Picture N>` names. Connect it to the
 Director's `enhance_json` input. The Director applies those values to its timeline editor,
-guide fields, duration controls, cast references, and reference numbering; changing the
-JSON source updates the UI while it is connected.
+guide fields, duration controls, cast/wardrobe/location references, and reference numbering;
+changing the JSON source updates the UI while it is connected. Structured `shots` in the
+model JSON are authoritative and become separate timeline segments even when the prose
+description does not repeat literal `[Shot N]` markers. Reference images are reopened from
+Comfy input or the project folder; Process embeds an image fallback only when its source
+cannot be reopened, so the JSON-only handoff still reaches the Director.
 
 Use **PROCESS PROMPT** after the cast, wardrobe, location, idea, and model settings are ready.
 This runs the VLM, spicy second pass, and sound-line completion immediately and stores the
 result on the node. The Director generation queue reuses that stored prompt, so those LLM
 steps are not repeated during generation. Press **CLEAR CACHE** and process again after
-changing an Enhance input. Casting Director, Wardrobe Director, and Location Scout are
+changing an Enhance input. **VIEW OUTPUT** shows the complete cached prompt and pretty-printed
+Director JSON, including every generated timeline shot; **COPY ALL** copies both for
+inspection or troubleshooting. Casting Director, Wardrobe Director, and Location Scout are
 authoring nodes; their analysis controls are run before the generation queue.
 
 <img src="docs/images/enhance-prompt-node.png" alt="The Enhance Prompt node" width="380">

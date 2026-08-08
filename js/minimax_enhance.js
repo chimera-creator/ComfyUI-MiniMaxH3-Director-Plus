@@ -11,6 +11,12 @@ const ENHANCE_STYLES = `
   .mmxd-enhance-process button:hover { color:#fff; border-color:#777; }
   .mmxd-enhance-process button:disabled { color:#666; cursor:wait; }
   .mmxd-enhance-process-status { flex:1 1 180px; color:#777; font-size:9px; min-height:13px; }
+  .mmxd-enhance-output-dialog { width:min(920px,90vw); height:min(720px,85vh); padding:0; color:#ddd; background:#181818; border:1px solid #555; border-radius:8px; }
+  .mmxd-enhance-output-dialog::backdrop { background:rgba(0,0,0,.72); }
+  .mmxd-enhance-output-dialog-header { display:flex; align-items:center; gap:8px; padding:9px 11px; border-bottom:1px solid #3a3a3a; font:600 11px ui-sans-serif,system-ui,sans-serif; }
+  .mmxd-enhance-output-dialog-header span { flex:1; }
+  .mmxd-enhance-output-dialog button { height:26px; padding:2px 10px; color:#ccc; background:#272727; border:1px solid #555; border-radius:4px; cursor:pointer; }
+  .mmxd-enhance-output-dialog textarea { display:block; width:100%; height:calc(100% - 45px); resize:none; box-sizing:border-box; padding:12px; color:#ddd; background:#111; border:0; outline:0; font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; }
 `;
 
 let styleEl = document.getElementById("minimax-h3-enhance-process-styles");
@@ -270,12 +276,50 @@ app.registerExtension({
       processButton.textContent = "PROCESS PROMPT";
       const clearButton = document.createElement("button");
       clearButton.textContent = "CLEAR CACHE";
+      const viewButton = document.createElement("button");
+      viewButton.textContent = "VIEW OUTPUT";
+      viewButton.disabled = true;
       const status = document.createElement("span");
       status.className = "mmxd-enhance-process-status";
+      const outputDialog = document.createElement("dialog");
+      outputDialog.className = "mmxd-enhance-output-dialog";
+      const outputHeader = document.createElement("div");
+      outputHeader.className = "mmxd-enhance-output-dialog-header";
+      const outputTitle = document.createElement("span");
+      outputTitle.textContent = "Processed Enhance prompt and Director JSON";
+      const copyOutputButton = document.createElement("button");
+      copyOutputButton.textContent = "COPY ALL";
+      const closeOutputButton = document.createElement("button");
+      closeOutputButton.textContent = "CLOSE";
+      const outputText = document.createElement("textarea");
+      outputText.readOnly = true;
+      outputText.spellcheck = false;
+      outputHeader.appendChild(outputTitle);
+      outputHeader.appendChild(copyOutputButton);
+      outputHeader.appendChild(closeOutputButton);
+      outputDialog.appendChild(outputHeader);
+      outputDialog.appendChild(outputText);
+      document.body.appendChild(outputDialog);
+      const previousRemoved = node.onRemoved;
+      node.onRemoved = function () {
+        outputDialog.remove();
+        return previousRemoved?.apply(this, arguments);
+      };
       const setStatus = (message, error = false) => {
         status.textContent = message || "";
         status.style.color = error ? "#d86f6f" : "#777";
       };
+      const refreshOutputText = () => {
+        const prompt = String(processedWidget?.value || node.properties?.processed_prompt || "");
+        const rawJson = String(processedDirectorWidget?.value
+          || node.properties?.processed_director_json || "");
+        let directorJson = rawJson;
+        try { directorJson = rawJson ? JSON.stringify(JSON.parse(rawJson), null, 2) : ""; } catch (_) {}
+        outputText.value = [prompt ? `PROMPT:\n${prompt}` : "",
+          directorJson ? `DIRECTOR_JSON:\n${directorJson}` : ""].filter(Boolean).join("\n\n");
+        viewButton.disabled = !outputText.value;
+      };
+      node._mmxRefreshEnhanceOutput = refreshOutputText;
       const setCachedPrompt = (prompt) => {
         const value = String(prompt || "");
         if (processedWidget) {
@@ -283,6 +327,7 @@ app.registerExtension({
           if (processedWidget.element) processedWidget.element.value = value;
         }
         node.properties = { ...(node.properties || {}), processed_prompt: value };
+        refreshOutputText();
         node.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
       };
@@ -294,6 +339,7 @@ app.registerExtension({
         }
         node.properties = { ...(node.properties || {}),
           processed_director_json: json, director_json: json };
+        refreshOutputText();
       };
       const invalidate = () => {
         if (processedWidget?.value || node.properties?.processed_prompt ||
@@ -362,7 +408,10 @@ app.registerExtension({
           if (!response.ok || result.status !== "success") throw new Error(result.message || "Process failed");
           setCachedPrompt(result.prompt || "");
           setCachedDirectorJson(result.director_json || "");
-          setStatus(`Processed ${imageValues.length} reference image${imageValues.length === 1 ? "" : "s"}. Generation will reuse this prompt.`);
+          const parsed = parseJson(result.director_json, {});
+          const shotCount = Array.isArray(parsed?.shots) ? parsed.shots.length : 0;
+          setStatus(`Processed ${imageValues.length} reference image${imageValues.length === 1 ? "" : "s"}`
+            + ` and ${shotCount} timeline shot${shotCount === 1 ? "" : "s"}. Generation will reuse this prompt.`);
         } catch (error) {
           setStatus(error.message || String(error), true);
         } finally {
@@ -374,9 +423,25 @@ app.registerExtension({
       clearButton.addEventListener("click", () => {
         setCachedPrompt(""); setCachedDirectorJson(""); setStatus("Prompt cache cleared.");
       });
+      viewButton.addEventListener("click", () => {
+        refreshOutputText();
+        if (outputText.value && typeof outputDialog.showModal === "function") outputDialog.showModal();
+      });
+      copyOutputButton.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(outputText.value);
+          copyOutputButton.textContent = "COPIED";
+          setTimeout(() => { copyOutputButton.textContent = "COPY ALL"; }, 1200);
+        } catch (_) {
+          outputText.focus();
+          outputText.select();
+        }
+      });
+      closeOutputButton.addEventListener("click", () => outputDialog.close());
       processButton.addEventListener("click", () => { void process(); });
       container.appendChild(processButton);
       container.appendChild(clearButton);
+      container.appendChild(viewButton);
       container.appendChild(status);
       const uiWidget = node.addDOMWidget("enhance_process_ui", "enhance_process_ui", container, {
         getValue: () => "", setValue: () => {},
@@ -400,6 +465,7 @@ app.registerExtension({
       if (node.properties?.processed_director_json && processedDirectorWidget && !processedDirectorWidget.value) {
         processedDirectorWidget.value = node.properties.processed_director_json;
       }
+      refreshOutputText();
       if (processedWidget?.value) setStatus("Processed prompt cached — generation will reuse it.");
     };
     const originalConfigure = nodeType.prototype.onConfigure;
@@ -413,6 +479,7 @@ app.registerExtension({
       if (directorWidget && (directorWidget.value || this.properties?.processed_director_json)) {
         directorWidget.value = directorWidget.value || this.properties.processed_director_json;
       }
+      this._mmxRefreshEnhanceOutput?.();
       return result;
     };
     const originalConnectionsChange = nodeType.prototype.onConnectionsChange;
