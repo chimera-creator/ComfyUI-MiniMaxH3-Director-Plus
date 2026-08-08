@@ -56,20 +56,6 @@ const applyDirectorWardrobeItems = (cast) => {
     ...character,
     wardrobe: String(character?.wardrobe || "").trim(),
   }));
-  for (const item of Array.isArray(cast.wardrobe_items) ? cast.wardrobe_items : []) {
-    const description = String(item?.description || "").trim();
-    if (!description) continue;
-    const sentence = /^(he|she)\s+/i.test(description)
-      ? description
-      : `he is wearing ${description.charAt(0).toLowerCase()}${description.slice(1)}`;
-    const punctuation = /[.!?]$/.test(sentence) ? "" : ".";
-    for (const slot of (item?.character_slots || item?.characters || [])) {
-      const index = Number(slot) - 1;
-      if (index < 0 || index >= characters.length) continue;
-      characters[index].wardrobe = [characters[index].wardrobe, sentence + punctuation]
-        .filter(Boolean).join(" ");
-    }
-  }
   return {
     ...cast,
     characters: characters.map((character) => ({
@@ -708,6 +694,14 @@ const STYLES = `
   .mmxd-character-validate-btn.loading { background: #333; color: #888; cursor: wait; pointer-events: none; }
   .mmxd-character-desc { width: 100%; height: 38px; background: #111; color: #e0e0e0; border: 1px solid #333; border-radius: 4px; font-size: 9px; resize: none; box-sizing: border-box; padding: 2px 4px; margin-top: 10px; outline: none; font-family: inherit; z-index: 10; }
   .mmxd-character-desc:focus { border-color: #4fff8f; }
+  .mmxd-wardrobe-section { display: none; width: 100%; margin: 2px 0 6px; padding: 6px 0 0; border-top: 1px solid #333; box-sizing: border-box; }
+  .mmxd-wardrobe-section-title { color: #777; font-size: 9px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; margin-bottom: 5px; }
+  .mmxd-wardrobe-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+  .mmxd-wardrobe-card { display: flex; gap: 7px; min-width: 0; min-height: 74px; padding: 4px; background: #1e1e1e; border: 1px solid #364452; border-radius: 6px; box-sizing: border-box; }
+  .mmxd-wardrobe-card-image { flex: 0 0 68px; width: 68px; height: 68px; object-fit: contain; background: #111; border-radius: 3px; }
+  .mmxd-wardrobe-card-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .mmxd-wardrobe-card-label { color: #9aa7b2; font-size: 9px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mmxd-wardrobe-card-description { color: #aaa; font-size: 9px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
   /* --- @char autocomplete popup --- */
   .mmxd-autocomplete-menu { position: fixed; background: #181818; border: 1px solid #444; border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 2px; z-index: 100000; box-shadow: 0 4px 16px rgba(0,0,0,0.6); min-width: 180px; max-height: 200px; overflow-y: auto; }
   .mmxd-autocomplete-item { background: #252525; color: #aaa; border: 1px solid #333; border-radius: 4px; padding: 6px 12px; font-size: 11px; font-family: monospace; cursor: pointer; text-align: left; display: flex; align-items: center; justify-content: space-between; transition: all 0.15s ease; }
@@ -4088,6 +4082,7 @@ class TimelineEditor {
 
     // --- Character reference slots (@char1–@char9) at the bottom of the editor ---
     this.createCharacterSlots(this.wrapper);
+    this.createWardrobeSlots(this.wrapper);
 
     // --- @char autocomplete on both prompt fields ---
     if (this.globalPromptInput) this.setupAutocomplete(this.globalPromptInput);
@@ -9272,6 +9267,65 @@ class TimelineEditor {
     );
   }
 
+  createWardrobeSlots(parent) {
+    const section = document.createElement("div");
+    section.className = "mmxd-wardrobe-section";
+    const title = document.createElement("div");
+    title.className = "mmxd-wardrobe-section-title";
+    title.textContent = "Wardrobe References";
+    section.appendChild(title);
+    const grid = document.createElement("div");
+    grid.className = "mmxd-wardrobe-grid";
+    section.appendChild(grid);
+    parent.appendChild(section);
+    this.wardrobePanel = section;
+    this.wardrobeGrid = grid;
+    this.updateWardrobeSlotsUI();
+  }
+
+  updateWardrobeSlotsUI() {
+    if (!this.wardrobePanel || !this.wardrobeGrid) return;
+    const externalCast = this.getConnectedCast();
+    const collages = Array.isArray(externalCast?.wardrobe_collages)
+      ? externalCast.wardrobe_collages.filter((collage) =>
+        collage && Array.isArray(collage.images) && collage.images.length > 0)
+      : [];
+    this.wardrobeGrid.innerHTML = "";
+    if (!collages.length) {
+      this.wardrobePanel.style.display = "none";
+      this._mmxRefreshTimelineLayout?.();
+      return;
+    }
+
+    collages.forEach((collage, index) => {
+      const card = document.createElement("div");
+      card.className = "mmxd-wardrobe-card";
+      const image = document.createElement("img");
+      image.className = "mmxd-wardrobe-card-image";
+      image.src = this._refImageSrc(collage.images[0]);
+      image.alt = `Wardrobe reference ${index + 1}`;
+      card.appendChild(image);
+
+      const copy = document.createElement("div");
+      copy.className = "mmxd-wardrobe-card-copy";
+      const label = document.createElement("div");
+      label.className = "mmxd-wardrobe-card-label";
+      const characterSlot = Number(collage.character_slot || collage.slot || index + 1);
+      const itemCount = Number(collage.item_count || 0);
+      label.textContent = `Subject ${characterSlot} wardrobe` +
+        (itemCount ? ` · ${itemCount} item${itemCount === 1 ? "" : "s"}` : "");
+      copy.appendChild(label);
+      const description = document.createElement("div");
+      description.className = "mmxd-wardrobe-card-description";
+      description.textContent = String(collage.description || "No item description.");
+      copy.appendChild(description);
+      card.appendChild(copy);
+      this.wardrobeGrid.appendChild(card);
+    });
+    this.wardrobePanel.style.display = "block";
+    this._mmxRefreshTimelineLayout?.();
+  }
+
   createCharacterSlots(parent) {
     const container = document.createElement("div");
     container.className = "mmxd-characters-container";
@@ -9529,6 +9583,7 @@ class TimelineEditor {
         slot.appendChild(placeholder);
       }
     }
+    this.updateWardrobeSlotsUI();
   }
 
   async runGemmaAnalysis(idx, btn) {
@@ -13059,10 +13114,14 @@ app.registerExtension({
             const characterImages = characters.reduce((sum, character) =>
               sum + (character?.hired === false ? 0 :
                 (Array.isArray(character?.images) ? character.images.length : 0)), 0);
-            const wardrobeImages = (Array.isArray(externalCast.wardrobe_items)
-              ? externalCast.wardrobe_items : []).reduce((sum, item) =>
-                (item?.character_slots || item?.characters || []).length > 0
-                  ? sum + (Array.isArray(item?.images) ? item.images.length : 0) : sum, 0);
+            const wardrobeCollages = Array.isArray(externalCast.wardrobe_collages)
+              ? externalCast.wardrobe_collages : [];
+            const wardrobeImages = wardrobeCollages.length > 0
+              ? wardrobeCollages.length
+              : (Array.isArray(externalCast.wardrobe_items)
+                ? externalCast.wardrobe_items : []).reduce((sum, item) =>
+                  (item?.character_slots || item?.characters || []).length > 0
+                    ? sum + (Array.isArray(item?.images) ? item.images.length : 0) : sum, 0);
             const extraImageInput = node.inputs?.some(input =>
               input.name === "ref_images" && input.link != null) ? 1 : 0;
             const start = Math.max(0, Number(getW("start_frame")?.value ?? timeline.normalStartFrame ?? 0));

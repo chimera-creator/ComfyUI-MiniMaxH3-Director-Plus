@@ -221,6 +221,26 @@ check("wardrobe image follows the character image",
       ["char", "wardrobe"])
 check_in("assigned wardrobe description reaches the subject definition",
          "he is wearing a red jacket.", wardrobe_prompt["prompt"])
+collage_cast = plan.merge_cast({}, json.dumps({
+    "characters": [{"images": [{"name": "char.png"}],
+                    "appearance": "He has brown eyes.",
+                    "wardrobe": "he is wearing a blue shirt."}],
+    "wardrobe_collages": [{"character_slot": 1,
+                            "images": [{"name": "wardrobe-collage.png"}],
+                            "description": "a blue shirt; a red jacket",
+                            "item_count": 2}],
+}))
+collage_prompt = compile(tl([img(0, 144)], ref_mode="ON",
+                             characters=collage_cast["characters"],
+                             wardrobe_collages=collage_cast["wardrobe_collages"]))
+check("one wardrobe collage is one wardrobe reference",
+      [slot["source"] for slot in collage_prompt["ref_image_slots"][:2]],
+      ["char", "wardrobe"])
+check_in("wardrobe collage gets its own prompt section and picture reference",
+         "wardrobe_definitions: <Wardrobe 1> is assigned to <Subject 1> and shown in <Picture 2>: a blue shirt; a red jacket.",
+         collage_prompt["prompt"])
+check_not_in("wardrobe description stays out of character section",
+             "a red jacket", collage_prompt["prompt"].split("\n\n")[0])
 check("ref_images input slots sit between character and timeline",
       [s["source"] for s in compile(tl([img(0, 144)], ref_mode="ON", characters=chars),
                                     extra_ref_image_count=2)["ref_image_slots"]],

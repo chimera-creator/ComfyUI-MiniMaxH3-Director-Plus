@@ -4,7 +4,7 @@
 const { app } = window.comfyAPI.app;
 const { api } = window.comfyAPI.api;
 
-const MAX_WARDROBE_ITEMS = 9;
+const MAX_WARDROBE_ITEMS = 18;
 const MAX_CHARACTERS = 9;
 
 const emptyItem = () => ({ images: [], description: "", character_slots: [] });
@@ -148,12 +148,73 @@ app.registerExtension({
       });
       uiWidget.serialize = false;
       uiWidget.computeSize = function (width) {
-        return [Math.max(10, width || node.size?.[0] || 760), 790];
+        return [Math.max(10, width || node.size?.[0] || 760), 1410];
       };
 
       let wardrobe = parseWardrobe(wardrobeWidget?.value || "");
+      let outputRevision = 0;
 
-      const buildOutput = () => {
+      const imageDataUrl = async (image) => {
+        if (!image) return null;
+        if (image.b64) {
+          return String(image.b64).includes(",") ? image.b64 : `data:image/jpeg;base64,${image.b64}`;
+        }
+        const src = imageSrc(image);
+        if (!src) return null;
+        try {
+          const response = await fetch(src);
+          const blob = await response.blob();
+          return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const loadImage = (src) => new Promise((resolve) => {
+        if (!src) { resolve(null); return; }
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => resolve(null);
+        image.src = src;
+      });
+
+      const makeCollage = async (images) => {
+        const loaded = (await Promise.all(images.map(async (image) =>
+          loadImage(await imageDataUrl(image))))).filter(Boolean);
+        if (!loaded.length) return null;
+        const tile = 192;
+        const columns = 4;
+        const rows = Math.ceil(loaded.length / columns);
+        const canvas = document.createElement("canvas");
+        canvas.width = columns * tile;
+        canvas.height = rows * tile;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#181818";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        loaded.forEach((image, index) => {
+          const x = (index % columns) * tile;
+          const y = Math.floor(index / columns) * tile;
+          const scale = Math.min((tile - 12) / image.width, (tile - 28) / image.height);
+          const width = Math.max(1, Math.round(image.width * scale));
+          const height = Math.max(1, Math.round(image.height * scale));
+          context.drawImage(image, x + Math.round((tile - width) / 2),
+            y + 20 + Math.round((tile - 20 - height) / 2), width, height);
+          context.fillStyle = "rgba(0,0,0,.8)";
+          context.fillRect(x + 5, y + 5, 19, 15);
+          context.fillStyle = "#fff";
+          context.font = "11px sans-serif";
+          context.fillText(String(index + 1), x + 11, y + 16);
+          context.fillStyle = "#181818";
+        });
+        return canvas.toDataURL("image/jpeg", 0.88);
+      };
+
+      const buildOutput = async () => {
+        const revision = ++outputRevision;
         const cast = sourceCastFor(node) || { version: 2, characters: [] };
         const characters = (cast.characters || []).filter((character) => character?.hired !== false)
           .map((character) => ({ ...character, hired: true }));
@@ -164,7 +225,22 @@ app.registerExtension({
             .map((slot) => Number(slot))
             .filter((slot) => Number.isInteger(slot) && slot >= 1 && slot <= characters.length))),
         }));
-        return JSON.stringify({ version: 2, characters, wardrobe_items: items });
+        const wardrobeCollages = [];
+        for (let characterSlot = 1; characterSlot <= characters.length; characterSlot++) {
+          const assigned = items.filter((item) => item.character_slots.includes(characterSlot));
+          const images = assigned.flatMap((item) => item.images || []);
+          const collage = await makeCollage(images);
+          if (!collage) continue;
+          wardrobeCollages.push({
+            character_slot: characterSlot,
+            images: [{ b64: collage, name: `wardrobe_collage_char${characterSlot}.jpg` }],
+            description: assigned.map((item) => item.description).filter(Boolean).join("; "),
+            item_count: images.length,
+          });
+        }
+        if (revision !== outputRevision) return null;
+        return JSON.stringify({ version: 2, characters, wardrobe_items: items,
+          wardrobe_collages: wardrobeCollages });
       };
 
       const save = () => {
@@ -173,26 +249,27 @@ app.registerExtension({
           wardrobeWidget.value = serialized;
           if (wardrobeWidget.element) wardrobeWidget.element.value = serialized;
         }
-        const output = buildOutput();
-        node.properties = {
-          ...(node.properties || {}),
-          wardrobe_data: serialized,
-          cast_wardrobe_output: output,
-        };
+        node.properties = { ...(node.properties || {}), wardrobe_data: serialized };
         node._wardrobeData = serialized;
-        node._wardrobeOutput = output;
         node._widgetSlotsDirty = true;
         node.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
-        for (const other of app.graph?._nodes || []) {
-          const input = other.inputs?.find((item) => item.name === "cast");
-          const link = input?.link != null ? app.graph.links?.[input.link] : null;
-          if (link?.origin_id === node.id) {
-            other._mmxRefreshCharacterSlots?.();
-            other._mmxRefreshPrompt?.();
-            other._mmxRefreshReferenceCounter?.();
+        void buildOutput().then((output) => {
+          if (!output) return;
+          node.properties = { ...(node.properties || {}), cast_wardrobe_output: output };
+          node._wardrobeOutput = output;
+          node.setDirtyCanvas?.(true, true);
+          app.graph?.setDirtyCanvas?.(true, true);
+          for (const other of app.graph?._nodes || []) {
+            const input = other.inputs?.find((item) => item.name === "cast");
+            const link = input?.link != null ? app.graph.links?.[input.link] : null;
+            if (link?.origin_id === node.id) {
+              other._mmxRefreshCharacterSlots?.();
+              other._mmxRefreshPrompt?.();
+              other._mmxRefreshReferenceCounter?.();
+            }
           }
-        }
+        });
       };
 
       const imageSrc = (image) => {
@@ -365,7 +442,7 @@ app.registerExtension({
       itemsContainer.className = "mmxd-wardrobe-items";
       const footer = document.createElement("div");
       footer.className = "mmxd-wardrobe-footer";
-      footer.textContent = "Up to 9 item image slots. Connect CAST + WARDROBE to the Director's cast input.";
+      footer.textContent = "Up to 18 item image slots. One wardrobe collage is generated per assigned character and sent to the Director's cast input.";
       container.appendChild(head); container.appendChild(status); container.appendChild(itemsContainer); container.appendChild(footer);
 
       const refresh = () => {

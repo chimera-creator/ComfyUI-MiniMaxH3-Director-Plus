@@ -27,7 +27,7 @@ MAX_REF_VIDEOS = 3          # "<= 3 clips"
 MAX_REF_AUDIOS = 3          # "<= 3 clips"
 MAX_REF_FILES = 12          # "at most 12 files in total across all input types"
 MAX_CHARACTERS = 9          # The Director and Casting Director expose nine slots.
-MAX_WARDROBE_ITEMS = 9     # The Wardrobe Director exposes nine item slots.
+MAX_WARDROBE_ITEMS = 18    # The Wardrobe Director exposes eighteen item slots.
 REF_VIDEO_MIN_SEC = 2.0     # "each clip must be 2-15 seconds long"
 REF_VIDEO_MAX_SEC = 15.0
 REF_VIDEO_TOTAL_SEC = 15.0  # "total duration <= 15 seconds"
@@ -166,7 +166,33 @@ def parse_cast(cast_data):
             "description": str(item.get("description") or "").strip(),
             "character_slots": clean_assignments,
         })
-    return {"characters": characters, "wardrobe_items": wardrobe_items}
+    wardrobe_collages = []
+    raw_collages = raw.get("wardrobe_collages")
+    if not isinstance(raw_collages, list):
+        raw_collages = []
+    for collage in raw_collages[:MAX_CHARACTERS]:
+        collage = collage if isinstance(collage, dict) else {}
+        try:
+            character_slot = int(collage.get("character_slot", collage.get("slot", 0)))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= character_slot <= len(characters):
+            continue
+        images = collage.get("images") if isinstance(collage.get("images"), list) else []
+        if not images and isinstance(collage.get("image"), dict):
+            images = [collage["image"]]
+        clean_images = [img for img in images
+                        if isinstance(img, dict) and (img.get("name") or img.get("b64"))]
+        if not clean_images:
+            continue
+        wardrobe_collages.append({
+            "character_slot": character_slot,
+            "images": clean_images[:1],
+            "description": str(collage.get("description") or "").strip(),
+            "item_count": int(collage.get("item_count") or 0),
+        })
+    return {"characters": characters, "wardrobe_items": wardrobe_items,
+            "wardrobe_collages": wardrobe_collages}
 
 
 def merge_cast(tdata, cast_data):
@@ -232,8 +258,7 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
     subject_of_slot = {}
     for slot_index, slot in enumerate(char_slots):
         ordinals = [i + 1 for i, s in enumerate(ref_image_slots)
-                    if s.get("source") in ("char", "wardrobe")
-                    and s.get("slot") == slot_index]
+                    if s.get("source") == "char" and s.get("slot") == slot_index]
         if not ordinals:
             continue
         subject = len(subject_of_slot) + 1
@@ -258,6 +283,31 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
         lines.append("<Audio %d> is a reference audio clip: follow its voice and timbre."
                      % (i + 1))
     return lines, subject_of_slot
+
+
+def build_wardrobe_definitions(wardrobe_collages, ref_image_slots, subject_of_slot):
+    """Describe each per-character wardrobe collage in its own prompt section."""
+    lines = []
+    wardrobe_number = 0
+    for collage in wardrobe_collages:
+        character_slot = int(collage.get("character_slot", 0)) - 1
+        subject = subject_of_slot.get(character_slot + 1)
+        if subject is None:
+            continue
+        ordinals = [i + 1 for i, slot in enumerate(ref_image_slots)
+                    if slot.get("source") == "wardrobe"
+                    and slot.get("slot") == character_slot]
+        if not ordinals:
+            continue
+        wardrobe_number += 1
+        pictures = " and ".join("<Picture %d>" % ordinal for ordinal in ordinals)
+        description = str(collage.get("description") or "").strip()
+        suffix = (": " + description) if description else "."
+        if description and not description.endswith((".", "!", "?")):
+            suffix += "."
+        lines.append("<Wardrobe %d> is assigned to <Subject %d> and shown in %s%s"
+                     % (wardrobe_number, subject, pictures, suffix))
+    return lines
 
 
 def alignment_instruction(has_first, has_last, shot_count, seconds):
@@ -296,7 +346,7 @@ def alignment_instruction(has_first, has_last, shot_count, seconds):
 
 
 def compile_storyboard_minimax(global_prompt, shots, soundscape="", music="",
-                               subject_lines=None, retention_lines=None,
+                               subject_lines=None, wardrobe_lines=None, retention_lines=None,
                                instruction=""):
     """The notation MiniMax documents in VIDEO_PROMPT_WRITING_GUIDE_*.md.
 
@@ -314,6 +364,8 @@ def compile_storyboard_minimax(global_prompt, shots, soundscape="", music="",
 
     if subject_lines:
         parts.append("subject_definitions: " + " ".join(subject_lines))
+    if wardrobe_lines:
+        parts.append("wardrobe_definitions: " + " ".join(wardrobe_lines))
     if retention_lines:
         parts.append("retention_analysis: " + " ".join(retention_lines))
 
@@ -482,32 +534,34 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
 
     wardrobe_items = [item for item in (tdata.get("wardrobe_items", []) or [])
                       if isinstance(item, dict)]
-    for slot_index, slot in enumerate(char_slots):
-        assigned_descriptions = []
-        for item in wardrobe_items:
-            assignments = item.get("character_slots", item.get("characters", []))
-            if slot_index + 1 not in assignments:
-                continue
-            text = str(item.get("description") or "").strip()
-            if not text:
-                continue
-            # Item descriptions are deliberately free text in the UI. Turn a fragment
-            # such as "a red jacket" into a sentence that can be appended to the cast's
-            # wardrobe field, while preserving a sentence the user already wrote.
-            lower = text.lower()
-            if lower.startswith(("he ", "she ")):
-                sentence = text
-            else:
-                fragment = text[:1].lower() + text[1:]
-                sentence = "he is wearing " + fragment
-            if sentence[-1:] not in ".!?":
-                sentence += "."
-            assigned_descriptions.append(sentence)
-        if assigned_descriptions:
-            slot["wardrobe"] = " ".join(
-                part for part in (slot.get("wardrobe", ""), *assigned_descriptions) if part)
-            slot["description"] = " ".join(
-                part for part in (slot.get("appearance", ""), slot["wardrobe"]) if part)
+    wardrobe_collages = [collage for collage in (tdata.get("wardrobe_collages", []) or [])
+                         if isinstance(collage, dict)]
+    # Keep old item-level payloads working. New Wardrobe Director payloads use a
+    # per-character collage and keep this material in its own prompt section instead.
+    if not wardrobe_collages:
+        for slot_index, slot in enumerate(char_slots):
+            assigned_descriptions = []
+            for item in wardrobe_items:
+                assignments = item.get("character_slots", item.get("characters", []))
+                if slot_index + 1 not in assignments:
+                    continue
+                text = str(item.get("description") or "").strip()
+                if not text:
+                    continue
+                lower = text.lower()
+                if lower.startswith(("he ", "she ")):
+                    sentence = text
+                else:
+                    fragment = text[:1].lower() + text[1:]
+                    sentence = "he is wearing " + fragment
+                if sentence[-1:] not in ".!?":
+                    sentence += "."
+                assigned_descriptions.append(sentence)
+            if assigned_descriptions:
+                slot["wardrobe"] = " ".join(
+                    part for part in (slot.get("wardrobe", ""), *assigned_descriptions) if part)
+                slot["description"] = " ".join(
+                    part for part in (slot.get("appearance", ""), slot["wardrobe"]) if part)
 
     # --- shots + image events ---
     shots, events = [], []
@@ -551,16 +605,11 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
     # --- reference ordinals, in the order the tokenizer will present them ---
     char_tag_values = {}
     ref_notes = []
-    ref_image_slots = []     # {"source": "char"/"input"/"timeline", ...} in <Picture i> order
+    ref_image_slots = []     # {"source": "char"/"wardrobe"/"input"/"timeline", ...}
 
     if ref_mode_on:
         for slot_idx, slot in enumerate(char_slots):
-            assigned_items = [
-                (item_index, item) for item_index, item in enumerate(wardrobe_items)
-                if slot_idx + 1 in item.get("character_slots", item.get("characters", []))
-            ]
-            has_wardrobe_image = any(item.get("images") for _, item in assigned_items)
-            if not slot["images"] and not has_wardrobe_image:
+            if not slot["images"]:
                 continue
             char_tag_values[slot_idx + 1] = "<Picture %d>" % (len(ref_image_slots) + 1)
             for img in slot["images"]:
@@ -568,12 +617,30 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                     break
                 ref_image_slots.append({"source": "char", "slot": slot_idx, "image": img})
                 ref_image_slots[-1]["slot"] = slot_idx
-            for item_index, item in assigned_items:
-                for img in item.get("images", []) or []:
-                    if len(ref_image_slots) >= MAX_REF_IMAGES:
-                        break
-                    ref_image_slots.append({"source": "wardrobe", "slot": slot_idx,
-                                            "item": item_index, "image": img})
+
+            if not wardrobe_collages:
+                for item_index, item in enumerate(wardrobe_items):
+                    if slot_idx + 1 not in item.get("character_slots", item.get("characters", [])):
+                        continue
+                    for img in item.get("images", []) or []:
+                        if len(ref_image_slots) >= MAX_REF_IMAGES:
+                            break
+                        ref_image_slots.append({"source": "wardrobe", "slot": slot_idx,
+                                                "item": item_index, "image": img})
+
+        for collage in wardrobe_collages:
+            if len(ref_image_slots) >= MAX_REF_IMAGES:
+                break
+            try:
+                character_slot = int(collage.get("character_slot", collage.get("slot", 0))) - 1
+            except (TypeError, ValueError):
+                continue
+            images = collage.get("images") if isinstance(collage.get("images"), list) else []
+            for img in images[:1]:
+                if not isinstance(img, dict) or not (img.get("name") or img.get("b64")):
+                    continue
+                ref_image_slots.append({"source": "wardrobe", "slot": character_slot,
+                                        "image": img, "description": collage.get("description", "")})
 
         for _ in range(max(0, int(extra_ref_image_count))):
             if len(ref_image_slots) >= MAX_REF_IMAGES:
@@ -703,10 +770,12 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
     actual_seconds = length / MODEL_FPS
 
     # --- prompt ---
-    subject_lines, subject_of_slot = [], {}
+    subject_lines, subject_of_slot, wardrobe_lines = [], {}, []
     if ref_mode_on and prompt_format == FORMAT_MINIMAX:
         subject_lines, subject_of_slot = build_subject_definitions(
             char_slots, ref_image_slots, ref_video_segs, ref_audio_segs)
+        wardrobe_lines = build_wardrobe_definitions(
+            wardrobe_collages, ref_image_slots, subject_of_slot)
         # a named subject beats a bare picture label: it survives across cuts
         for slot, subject in subject_of_slot.items():
             char_tag_values[slot] = "<Subject %d>" % subject
@@ -759,7 +828,8 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                 any(e["role"] == ROLE_LAST for e in events),
                 written_shots, actual_seconds)
         prompt = compile_storyboard_minimax(global_prompt, shots, soundscape, music,
-                                            subject_lines, retention_lines, instruction)
+                                            subject_lines, wardrobe_lines,
+                                            retention_lines, instruction)
     else:
         prompt = compile_storyboard(global_prompt, shots, window_seconds)
         if ref_notes:

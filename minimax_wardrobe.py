@@ -1,12 +1,22 @@
-"""Wardrobe item editor for MiniMax H3 Director Plus."""
+"""Wardrobe item editor and per-character collage builder for MiniMax H3 Director Plus."""
 
+import base64
+import io as _io
 import json
+import math
+import os
+import uuid
 
 from comfy_api.latest import io
+import folder_paths
+from PIL import Image, ImageDraw, ImageOps
 
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
+from . import minimax_media as media
 
-MAX_WARDROBE_ITEMS = 9
+MAX_WARDROBE_ITEMS = 18
+COLLAGE_TILE = 256
+COLLAGE_COLUMNS = 4
 
 
 def _empty_item():
@@ -66,6 +76,76 @@ def _normalise_items(value):
     return items
 
 
+def _load_item_image(image):
+    """Read one uploaded item image without failing the entire wardrobe payload."""
+    try:
+        if image.get("name"):
+            path = media.resolve_input_path(image["name"])
+            if path:
+                return Image.open(path).convert("RGB")
+        encoded = image.get("b64") or ""
+        if encoded:
+            encoded = encoded.split(",", 1)[1] if "," in encoded else encoded
+            return Image.open(_io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+    except Exception:
+        return None
+    return None
+
+
+def _write_wardrobe_collage(images):
+    """Create one compact reference image containing all items for one character."""
+    if not images:
+        return None
+    rows = int(math.ceil(len(images) / float(COLLAGE_COLUMNS)))
+    width = COLLAGE_COLUMNS * COLLAGE_TILE
+    height = rows * COLLAGE_TILE
+    collage = Image.new("RGB", (width, height), (24, 24, 24))
+    draw = ImageDraw.Draw(collage)
+    for index, image in enumerate(images):
+        row, column = divmod(index, COLLAGE_COLUMNS)
+        x, y = column * COLLAGE_TILE, row * COLLAGE_TILE
+        fitted = ImageOps.contain(image, (COLLAGE_TILE - 16, COLLAGE_TILE - 28))
+        paste_x = x + (COLLAGE_TILE - fitted.width) // 2
+        paste_y = y + 20 + (COLLAGE_TILE - 20 - fitted.height) // 2
+        collage.paste(fitted, (paste_x, paste_y))
+        draw.rectangle((x + 5, y + 5, x + 24, y + 20), fill=(0, 0, 0))
+        draw.text((x + 10, y + 7), str(index + 1), fill=(255, 255, 255))
+
+    output_dir = os.path.join(folder_paths.get_input_directory(), "whatdreamscost")
+    os.makedirs(output_dir, exist_ok=True)
+    filename = "wardrobe_collage_%s.jpg" % uuid.uuid4().hex
+    path = os.path.join(output_dir, filename)
+    collage.save(path, format="JPEG", quality=92, optimize=True)
+    return {"name": "whatdreamscost/%s" % filename}
+
+
+def _build_wardrobe_collages(active_characters, items):
+    collages = []
+    for character_slot in range(1, len(active_characters) + 1):
+        assigned_items = [
+            item for item in items
+            if character_slot in item.get("character_slots", []) and item.get("images")
+        ]
+        source_images = []
+        descriptions = []
+        for item in assigned_items:
+            image = _load_item_image(item["images"][0])
+            if image is not None:
+                source_images.append(image)
+            if item.get("description"):
+                descriptions.append(item["description"])
+        collage = _write_wardrobe_collage(source_images)
+        if collage is None:
+            continue
+        collages.append({
+            "character_slot": character_slot,
+            "images": [collage],
+            "description": "; ".join(descriptions),
+            "item_count": len(source_images),
+        })
+    return collages
+
+
 class MiniMaxH3WardrobeDirector(io.ComfyNode):
     """Assign wardrobe reference images and item descriptions to cast members."""
 
@@ -114,10 +194,12 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
             }
             for item in items
         ]
+        wardrobe_collages = _build_wardrobe_collages(active_characters, items)
         payload = {
             "version": 2,
             "characters": active_characters,
             "wardrobe_items": items,
+            "wardrobe_collages": wardrobe_collages,
         }
         return io.NodeOutput(json.dumps(payload, separators=(",", ":")))
 
