@@ -77,7 +77,11 @@ function sourceAnalyzeSettingsFor(node) {
     const link = input?.link != null ? app.graph?.links?.[input.link] : null;
     const source = link ? app.graph?.getNodeById(link.origin_id) : null;
     if (!source) return null;
-    const raw = source?.properties?.analyze_settings_output || input?.value || "";
+    // Read the live Casting Director state first; the cached settings output can be
+    // stale while the user is editing the analysis controls.
+    const castWidget = source?.widgets?.find((item) => item.name === "cast_data");
+    const raw = castWidget?.value || source?.properties?.cast_data
+      || source?.properties?.analyze_settings_output || input?.value || "";
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     if (!parsed || typeof parsed !== "object") return null;
     return {

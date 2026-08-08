@@ -94,8 +94,11 @@ function sourceAnalyzeSettingsFor(node) {
     const source = link ? app.graph?.getNodeById(link.origin_id) : null;
     if (!source) return null;
     const castWidget = source.widgets?.find((item) => item.name === "cast_data");
-    const raw = source?.properties?.analyze_settings_output
-      || castWidget?.value || source?.properties?.cast_data || input?.value || "";
+    // cast_data is the live Casting Director state. Prefer it over the cached
+    // analyze_settings_output property so changing the provider or URL is reflected
+    // immediately, before the graph has been executed again.
+    const raw = castWidget?.value || source?.properties?.cast_data
+      || source?.properties?.analyze_settings_output || input?.value || "";
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     if (!parsed || typeof parsed !== "object") return null;
     return {

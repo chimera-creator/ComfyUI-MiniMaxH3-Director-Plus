@@ -373,9 +373,9 @@ app.registerExtension({
         cast.analyzeModel = "";
         refreshSettings(); save(); renderSlots();
       });
-      url.addEventListener("change", () => { cast.analyzeBaseUrl = url.value.trim(); save(); });
-      model.addEventListener("change", () => { cast.analyzeModel = model.value.trim(); save(); });
-      apiKey.addEventListener("change", () => { cast.analyzeApiKey = apiKey.value.trim(); save(); });
+      url.addEventListener("input", () => { cast.analyzeBaseUrl = url.value.trim(); save(); });
+      model.addEventListener("input", () => { cast.analyzeModel = model.value.trim(); save(); });
+      apiKey.addEventListener("input", () => { cast.analyzeApiKey = apiKey.value.trim(); save(); });
       settings.appendChild(settingRow("Provider", provider));
       settings.appendChild(settingRow("Base URL", url));
       settings.appendChild(settingRow("Model", model));
