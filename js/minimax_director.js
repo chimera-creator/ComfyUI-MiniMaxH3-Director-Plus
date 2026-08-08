@@ -9224,7 +9224,10 @@ class TimelineEditor {
 
   getDisplayedCharacters() {
     const externalCast = this.getConnectedCast();
-    return externalCast ? externalCast.characters : (this.timeline.characters || []);
+    if (!externalCast) return this.timeline.characters || [];
+    return externalCast.characters.map((character) =>
+      character?.hired === false ? { images: [], description: "", hired: false } : character
+    );
   }
 
   createCharacterSlots(parent) {
@@ -9403,7 +9406,7 @@ class TimelineEditor {
     }
 
     const externalCast = this.getConnectedCast();
-    const characters = externalCast ? externalCast.characters : this.timeline.characters;
+    const characters = this.getDisplayedCharacters();
     for (let i = 0; i < MAX_CHARACTERS; i++) {
       const slot = this.characterSlots[i];
       const data = characters[i] || { images: [], description: "" };
@@ -13011,7 +13014,8 @@ app.registerExtension({
               ? externalCast.characters
               : (Array.isArray(timeline.characters) ? timeline.characters : []);
             const characterImages = characters.reduce((sum, character) =>
-              sum + (Array.isArray(character?.images) ? character.images.length : 0), 0);
+              sum + (character?.hired === false ? 0 :
+                (Array.isArray(character?.images) ? character.images.length : 0)), 0);
             const extraImageInput = node.inputs?.some(input =>
               input.name === "ref_images" && input.link != null) ? 1 : 0;
             const start = Math.max(0, Number(getW("start_frame")?.value ?? timeline.normalStartFrame ?? 0));

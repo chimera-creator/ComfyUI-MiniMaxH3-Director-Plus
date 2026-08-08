@@ -117,9 +117,21 @@ def parse_cast(cast_data):
                        "name": item.get("fileName", "")}]
         clean_images = [img for img in images
                         if isinstance(img, dict) and (img.get("name") or img.get("b64"))]
+        hired = item.get("hired")
+        if hired is None:
+            hired = True  # legacy casts predate the hire toggle
+        if isinstance(hired, str):
+            hired = hired.strip().lower() not in {"", "0", "false", "off", "no"}
+        else:
+            hired = bool(hired)
+        description = str(item.get("description") or "")
+        if not hired:
+            clean_images = []
+            description = ""
         characters.append({
             "images": clean_images,
-            "description": str(item.get("description") or ""),
+            "description": description,
+            "hired": hired,
         })
     return {"characters": characters}
 

@@ -8,7 +8,15 @@ MAX_CHARACTERS = 9
 
 
 def _empty_character():
-    return {"images": [], "description": ""}
+    return {"images": [], "description": "", "hired": False}
+
+
+def _is_hired(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "off", "no"}
+    return bool(value)
 
 
 def _empty_cast():
@@ -40,6 +48,8 @@ def _normalise_cast(cast_data):
             result["characters"].append({
                 "images": images,
                 "description": str(item.get("description") or ""),
+                # Casts saved before the hire toggle existed remain active.
+                "hired": _is_hired(item.get("hired")),
             })
         while len(result["characters"]) < MAX_CHARACTERS:
             result["characters"].append(_empty_character())
@@ -83,7 +93,14 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
         value = _normalise_cast(cast_data)
         # Analyzer settings stay local to this node; the graph only needs the reusable
         # character payload and should not carry an API key into the Director socket.
-        payload = {"version": value["version"], "characters": value["characters"]}
+        payload = {"version": value["version"], "characters": [
+            {
+                **character,
+                "images": character["images"] if character.get("hired", True) else [],
+                "description": character["description"] if character.get("hired", True) else "",
+            }
+            for character in value["characters"]
+        ]}
         return io.NodeOutput(json.dumps(payload, separators=(",", ":")))
 
 
