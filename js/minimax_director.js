@@ -39,6 +39,9 @@ const GLOBAL_PROMPT_MIN_H = 60;                                    // the prompt
 const GLOBAL_PROP_MIN_H = GLOBAL_PROMPT_MIN_H + GUIDE_ROW_HEIGHT + SOUND_ROW_HEIGHT;
 const MAX_THUMBNAIL_DIM = 512; // Increased to maintain quality for taller images
 const MAX_CHARACTERS = 9;
+const CHARACTER_SLOT_HEIGHT = 120;
+const CHARACTER_GRID_GAP = 12;
+const CHARACTER_SLOT_MIN_WIDTH = 160;
 
 const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
 
@@ -1461,6 +1464,8 @@ class TimelineEditor {
 
   destroy() {
     cancelAnimationFrame(this._renderLoop);
+    this._characterGridObserver?.disconnect();
+    this._characterGridObserver = null;
     this.pauseAudio();
     window.removeEventListener("keydown", this.handleKeyDown, true);
     window.removeEventListener("paste", this.handlePaste, true);
@@ -4044,7 +4049,7 @@ class TimelineEditor {
     this.wrapper.appendChild(propContainer);
     this.wrapper.appendChild(this.globalPropContainer);
 
-    // --- Character reference slots (3 @char panels) at the bottom of the editor ---
+    // --- Character reference slots (@char1–@char9) at the bottom of the editor ---
     this.createCharacterSlots(this.wrapper);
 
     // --- @char autocomplete on both prompt fields ---
@@ -9253,7 +9258,26 @@ class TimelineEditor {
 
     parent.appendChild(container);
     this.charPanelContainer = container;
-    this.charPanelHeight = 384;
+    this._refreshCharacterGrid = () => {
+      const width = container.clientWidth || parent.clientWidth ||
+        Math.max(10, (this.node?.size?.[0] || 1375) - 30);
+      const columns = width >= (CHARACTER_SLOT_MIN_WIDTH * 3 + CHARACTER_GRID_GAP * 2)
+        ? 3
+        : (width >= (CHARACTER_SLOT_MIN_WIDTH * 2 + CHARACTER_GRID_GAP) ? 2 : 1);
+      const rows = Math.ceil(MAX_CHARACTERS / columns);
+      container.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+      const nextHeight = rows * CHARACTER_SLOT_HEIGHT +
+        Math.max(0, rows - 1) * CHARACTER_GRID_GAP + 10;
+      if (this.charPanelHeight !== nextHeight) {
+        this.charPanelHeight = nextHeight;
+        this.node?._mmxRefreshTimelineLayout?.();
+      }
+    };
+    if (window.ResizeObserver) {
+      this._characterGridObserver = new ResizeObserver(this._refreshCharacterGrid);
+      this._characterGridObserver.observe(container);
+    }
+    this._refreshCharacterGrid();
     this.updateCharacterSlotsUI();
   }
 
@@ -13050,12 +13074,30 @@ app.registerExtension({
           const canvasH = self._timelineEditor ? self._timelineEditor.canvasHeight : CANVAS_HEIGHT;
           const propH = self._timelineEditor ? (self._timelineEditor.propHeight || 90) : 90;
           const globalPropH = self._timelineEditor ? (self._timelineEditor.globalPropHeight || 60) : 60;
-          // Reserve room for the @char reference panel at the bottom so the node doesn't
-          // collapse and crop it whenever ComfyUI recomputes the node height.
           const charPanelH = self._timelineEditor ? (self._timelineEditor.charPanelHeight || 150) : 150;
           const nodeWidth = self.size?.[0] || width || 1375;
-          return [Math.max(10, nodeWidth - 30), canvasH + propH + globalPropH + charPanelH + 160];
+          // Once the editor exists, its measured content height is authoritative. The
+          // old fixed reserve left an empty strip below the character grid before the
+          // compiled-prompt widget, especially with nine slots.
+          const measured = self._timelineEditor?.wrapper?.scrollHeight || container.scrollHeight || 0;
+          const fallback = canvasH + propH + globalPropH + charPanelH + 160;
+          return [Math.max(10, nodeWidth - 30), measured > 0 ? measured + 4 : fallback];
         };
+        let timelineLayoutFrame = null;
+        const refreshTimelineLayout = () => {
+          if (timelineLayoutFrame) cancelAnimationFrame(timelineLayoutFrame);
+          timelineLayoutFrame = requestAnimationFrame(() => {
+            timelineLayoutFrame = null;
+            self._widgetSlotsDirty = true;
+            self.setDirtyCanvas(true, true);
+            if (self.graph) self.graph.setDirtyCanvas(true, true);
+            const size = self.computeSize?.();
+            if (size && size[1] > 0 && Math.abs((self.size?.[1] || 0) - size[1]) > 2) {
+              self.setSize([self.size[0], size[1]]);
+            }
+          });
+        };
+        self._mmxRefreshTimelineLayout = refreshTimelineLayout;
 
         // --- Live prompt preview -------------------------------------------------
         // Shows the storyboard the Director will actually encode. The text comes from
@@ -13224,6 +13266,7 @@ app.registerExtension({
             }
             // honour the saved gear-menu setting on load
             self._mmxSetPromptPreview(self.properties?.showPromptPreview !== false, true);
+            self._mmxRefreshTimelineLayout?.();
           } catch (err) {
             console.error("[MiniMaxDirector] timeline editor init failed:", err);
           }
