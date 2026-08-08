@@ -29,9 +29,12 @@ see the exact prompt the model will receive while you are still editing it.
 - [Models](#models)
 - [Quick start](#quick-start)
 - [The timeline](#the-timeline)
+- [Director controls](#director-controls)
+- [Cast, wardrobe, and locations](#cast-wardrobe-and-locations)
 - [Prompt format](#prompt-format)
 - [Live preview while sampling](#live-preview-while-sampling)
 - [Writing the prompt for you](#writing-the-prompt-for-you)
+- [Projects and saved data](#projects-and-saved-data)
 - [Retake Mode](#retake-mode)
 - [Longer than 15 seconds](#longer-than-15-seconds)
 - [Troubleshooting](#troubleshooting)
@@ -103,6 +106,10 @@ videos, drag-and-drop straight onto the node, and the `@char1` … `@char9`
 character slots including the optional local VLM "Analyze" button (Ollama / LM Studio /
 any OpenAI-compatible endpoint) with automatic VRAM release before a run.
 
+All nodes in this package use distinct **Plus** names and are stored in the
+`ComfyUI-MiniMaxH3-Director-Plus` directory, so this package can coexist with the original
+Director nodes.
+
 ## Requirements
 
 * **ComfyUI ≥ 0.30.0** — H3 support, `comfy_api.latest` and the packed AV latent all
@@ -145,6 +152,10 @@ There is **nothing to pip install** — the package declares no third-party depe
 Then restart ComfyUI **and hard-reload the browser** (Ctrl+F5). The timeline is a
 frontend extension; a stale cached `.js` is the single most common "node looks broken"
 report.
+
+Keep the `-Plus` directory name when the original Director package is installed too.
+The Plus node IDs and display names are separate, so both packages can be loaded at the
+same time.
 
 ### Updating
 
@@ -231,6 +242,21 @@ readable; open them if you want to change sampler, scheduler or steps.
 
 ## The timeline
 
+For a structured reference workflow, connect the nodes in this order:
+
+```
+Casting Director CAST + WARDROBE -> Wardrobe Director -> Location Scout -> Director.cast
+Casting Director ANALYZE SETTINGS -> Wardrobe Director / Location Scout
+Location Scout LOCATION CONTEXT -> Enhance Prompt.context
+Location Scout IMAGE REFS -> Enhance Prompt.images
+Enhance Prompt prompt -> Director.global_prompt
+Enhance Prompt ref_images -> Director.ref_images
+```
+
+The Director can still be used by itself. External cast, wardrobe, location, and Enhance
+connections are optional; unconnected Director character slots, timeline prompts, and
+manual sound fields remain available.
+
 | Track | Drop this | Becomes |
 |---|---|---|
 | **Main** | images | first/last keyframe (Refs OFF) or `<Picture i>` (Refs ON) |
@@ -245,7 +271,7 @@ These are enforced, with a warning naming exactly what was dropped:
 
 | Limit | Value |
 |---|---|
-| Reference images | ≤ 9 — the nine character slots *and* the `ref_images` input share this pool |
+| Reference images | ≤ 9 — character, wardrobe, location, timeline, and `ref_images` references share this pool |
 | Reference videos | ≤ 3 clips, each 2–15 s, **≤ 15 s total** |
 | Reference audio | ≤ 3 clips |
 | **All types together** | **≤ 12 files** |
@@ -255,6 +281,63 @@ Output envelope: 4–15 s at 24 fps. Aspect ratios 21:9, 16:9, 4:3, 1:1, 3:4, 9:
 Anything you drop on a track is uploaded to `ComfyUI/input/whatdreamscost/`. That is the
 same folder LTX Director uses, deliberately — if you run both, assets and saved timelines
 carry over between them.
+
+## Director controls
+
+The Director settings panel is split into **Resolution** and **Timing / Reference**.
+
+### Resolution presets
+
+The preset menu applies dimensions already snapped to H3's required multiple of 32. The
+listed megapixel values are approximate:
+
+| Megapixels | Aspect | Output |
+|---:|:---:|---:|
+| 0.2 | 16:9 | 608 x 352 |
+| 0.3 | 16:9 | 736 x 416 |
+| 0.4 | 16:9 | 864 x 480 |
+| 0.5 | 16:9 | 960 x 544 |
+| 0.6 | 16:9 | 1056 x 608 |
+| 0.7 | 16:9 | 1152 x 640 |
+| 0.8 | 16:9 | 1216 x 672 |
+| 0.9 | 16:9 | 1280 x 736 |
+| 0.98 | 16:9 | 1344 x 768 |
+| 1.0 | 16:9 | 1376 x 768 |
+| 1.2 | 16:9 | 1504 x 832 |
+| 1.5 | 16:9 | 1664 x 928 |
+| 1.8 | 16:9 | 1824 x 1024 |
+| 2.0 | 16:9 | 1920 x 1088 |
+
+Custom width and height remain available, along with native 16:9, 9:16, 1:1, fast, and
+2K presets. Larger canvases cost more memory and are outside the most comfortable H3
+operating range.
+
+### Duration versus Start / End
+
+* **Duration** is the length of the generated H3 clip. It is a slider and is capped by
+  the last valid H3 frame-grid point below the nominal 15-second ceiling: about **14.37 s
+  at 24 fps** (345 output frames). The backend also clamps connected duration automation
+  to that same valid maximum.
+* **Start** and **End** are positions in the timeline/render window. End is a slider whose
+  minimum follows Start and whose maximum is Start plus the H3 maximum window. The active
+  window is the section of the timeline between those positions; it is not a second way
+  to request a longer H3 generation.
+* **Units** switches the panel between seconds and frames. Frame values are converted at
+  the selected frame rate, and the final H3 length is snapped to the 17k+5 temporal grid.
+
+If a connected automation value is supplied to the Director's `start`, `end`, or `duration`
+inputs, it takes precedence over the corresponding panel value. A request such as 15.1 s
+can therefore still produce a trained-range warning when it comes from another node, even
+though the visible Duration slider will not exceed its cap.
+
+### Reference budget counter
+
+The panel reports `Images / 9`, `Video / 3`, `Audio / 3`, and `Total / 12` for the current
+window. Image references include character, wardrobe, location, connected `ref_images`,
+and timeline images. Clips are counted when they overlap the render window. References
+over the per-type or total H3 limits are trimmed with a warning before sampling.
+
+## Cast, wardrobe, and locations
 
 ### Character slots and the Analyze button
 
@@ -267,6 +350,9 @@ vision model and asks for JSON containing separate `appearance` and `wardrobe` f
 Appearance covers physical traits without clothing; Wardrobe covers clothing and
 accessories. The two fields are merged into the Director's one-line character description,
 so `@char1` still means something in **Refs OFF** mode, where H3 gets no image at all.
+Wardrobe analysis is normalized to begin with a pronoun-aware phrase such as `he is wearing`
+or `she is wearing`, and the compiled character sentence merges appearance first and
+wardrobe second without adding a separate `Character description:` label.
 Nothing is installed for you and nothing is sent anywhere unless you press the button.
 
 To use it, run a vision model locally and point the gear menu's provider row at it:
@@ -276,6 +362,13 @@ To use it, run a vision model locally and point the gear menu's provider row at 
 | Ollama | `http://127.0.0.1:11434` | `ollama pull qwen2.5vl:7b` — any vision model works, the field is free text |
 | LM Studio | `http://127.0.0.1:1234` | load a vision model, start the local server |
 | Custom | — | any OpenAI-compatible `/v1/chat/completions` endpoint |
+
+For **Custom** and LM Studio providers, the API key is optional. It is sent as a Bearer
+token only when the field is non-empty; providers that do not require a key receive no
+Authorization header. A custom URL may be a host, a `/v1` base, or the full
+`/v1/chat/completions` endpoint. The node normalizes these forms, so do not append the
+path twice. A custom HTTP 404 usually means the provider's actual chat-completions path
+or API compatibility mode differs from the URL entered here.
 
 With Ollama the node also asks it to unload the model before a render, so the VLM does not
 sit in VRAM while H3 samples.
@@ -290,6 +383,12 @@ becomes Director slot 1 when slot 1 is not hired. Use **REMOVE** to clear a cast
 An external cast replaces only the Director's character slots; the Director's timeline,
 prompt overrides and sound fields remain independent.
 
+Both the built-in Director editor and Casting Director support up to nine character slots.
+The character grids reflow with node width instead of relying on fixed positions. The
+Casting Director's **HIRE** toggle controls passthrough and **REMOVE** clears a member.
+Only hired members are emitted, and they are compacted from slot 1: hiring Casting slot 2
+alone makes it Director slot 1; hiring slot 3 as well makes it Director slot 2.
+
 Each cast member also has a **Pronouns** setting (**Auto**, **He / Him**, **She / Her**, or
 **They / Them**). Wardrobe items categorized as **Anatomy** follow the clothing items in
 the wardrobe prompt and use that cast member's possessive pronoun, such as `her body has a`
@@ -300,6 +399,8 @@ accessory reference image into an item, enter its item description, and assign i
 or more active characters. It creates one collage per character containing every assigned
 item, then sends those collages and their final item descriptions in a separate
 `wardrobe_definitions` prompt section directly below `subject_definitions`.
+The editor shows three rows at a time with a scrollbar for the remaining items, and each
+item can be removed or replaced without changing the other assignments.
 Connect the Casting Director's `ANALYZE SETTINGS` output to enable an **ANALYZE** button
 on each item; the same provider, model, URL, and optional API key are used for the item
 description analysis.
@@ -319,9 +420,41 @@ combined images and a text context for Enhance Prompt, plus a `CAST + WARDROBE +
 socket for the Director. Save Sets writes `Projects/<project>/sets/sets.json` and copies
 referenced assets into `Projects/<project>/sets/resources/`.
 
+Location images are ordered after the cast and wardrobe images. The visible `<image N>`
+label is the order supplied to Enhance Prompt, while the Director converts the same
+ordered references to concrete `<Picture N>` tokens in `location_definitions`. This keeps
+the generated location description attached to the correct reference even when characters
+or wardrobe collages are added first.
+
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the
 warnings rather than silently ignored.
+
+## Projects and saved data
+
+The Director, Wardrobe Director, and Location Scout each have a project selector, project
+name field, refresh button, and save button. Projects are named folders inside the node
+directory:
+
+```
+Projects/<project>/
+  wardrobe/project.json       # merged project index
+  wardrobe/<source>.json      # casting, wardrobe, director, or enhanced_prompt source
+  wardrobe/resources/         # copied cast, wardrobe, and Director assets
+  sets/sets.json              # Location Scout source
+  sets/resources/             # copied location/set assets
+```
+
+The Director save captures the compiled prompt, prompt metadata, timeline, resolution,
+frame rate, timing window, resize/reference settings, cast connection state, and connected
+source metadata. Wardrobe saves item descriptions, categories, assignments, collages, and
+cast passthrough data. Location Scout saves its set descriptions and references under the
+`sets` folder. Saving a node merges its source into the project's master document instead
+of deleting the other sources.
+
+Project names are sanitized before becoming folders. Uploaded assets are copied from
+ComfyUI's input area into the relevant project resource folder when they are available;
+the workflow data still retains the original ComfyUI reference.
 
 ## Prompt format
 
@@ -350,6 +483,24 @@ sections are omitted entirely — an empty heading is worse than none.
 `Audio:` / `Sound:` / `SFX:` and `Music:` / `Score:` lines written in the prompt text are
 still lifted into the same two sections, so older workflows and the Enhance node keep
 working. A filled box wins over a lifted line.
+
+### Prompt overrides
+
+When characters are present, the Director automatically formulates
+`subject_definitions` and `retention_analysis`. The two additional guide-row fields are
+manual overrides: entering text in `subject_definitions` replaces the automatic subject
+bindings, and entering text in `retention_analysis` replaces the automatic identity,
+camera, and reference-continuity rules. Leave either field empty to keep automatic
+generation.
+
+Character descriptions are appended directly after their picture binding, for example:
+
+```
+subject_definitions: <Subject 1> is the character shown in <Picture 1> he has short dark hair and brown eyes.
+```
+
+Wardrobe collages and Location Scout references can add separate `wardrobe_definitions`
+and `location_definitions` sections with their concrete `<Picture N>` assignments.
 
 **`<Subject N>` vs `<Picture N>`** is worth knowing: the guide reserves `<Subject N>` for
 reusable content — a person, a place, a style — and `<Picture N>` for concrete frame
@@ -443,6 +594,7 @@ Sockets grow as you connect, up to nine, and close the gap again when you discon
 | Widget | What it does |
 |---|---|
 | `idea` | What you want, in plain words. |
+| `context` | Optional structured context from Location Scout, including cast, wardrobe, and ordered `<image N>` location references. |
 | `preset` | `global` writes scene, style, subjects and lighting and leaves the shots to your timeline. `storyboard` writes the whole shot sequence with timestamps — only for timelines whose segments carry no prompt text, or the two shot numberings collide. |
 | `system_prompt` | Overrides the built-in instructions, which follow MiniMax's own prompt-writing guide. |
 | `provider` / `base_url` / `model` / `api_key` | Ollama, LM Studio, or any OpenAI-compatible endpoint. `api_key` is optional and is sent as a Bearer token only when set. `http://` is added if you leave the base URL off; host and port only, no path. |
@@ -463,6 +615,15 @@ markers in `global` mode. The Director compiles the structured MiniMax prompt an
 the reference numbers — a second set from the model would nest structure inside structure
 and collide with the Director's own ordinals. The instructions forbid it and the output is
 filtered anyway, because small models do not reliably obey.
+
+### Spicy Model second pass
+
+Enable **Use Spicy Model** to send the first-pass prompt through a second LLM pass. This
+pass uses `spicy_model`, or reuses the primary model when that field is empty, and applies
+the built-in adult-only, consensual sensual-detail system prompt. You can replace that
+system prompt with `spicy_system_prompt`. The second pass preserves identities, setting,
+actions, camera language, timings, reference tags, and the final `Audio:` / `Music:` lines.
+If it fails and `on_error` is `passthrough`, the first-pass prompt is retained.
 
 **If the VLM and H3 share a GPU**, the vision model is evicted after each run
 (`unload_after`). Ollama has no per-request device selection, so to put it on a different
@@ -497,6 +658,10 @@ Restart ComfyUI fully and hard-reload the browser (Ctrl+F5). If they still do no
 look at the ComfyUI console during startup — an import error is printed there. Check your
 ComfyUI version is ≥ 0.30.0.
 
+If the original nodes appear but the Plus nodes do not, confirm the package is installed
+as `custom_nodes/ComfyUI-MiniMaxH3-Director-Plus`, then restart and hard-refresh again.
+The frontend files are cached independently from the Python backend.
+
 **The node loads but the timeline is blank / looks like a plain widget list.**
 Stale frontend cache. Ctrl+F5. In a private window it will look correct if that is the cause.
 
@@ -528,6 +693,13 @@ Reported once so far, on ROCm/Windows, where fp16 convolution kernels take diffe
 paths than on CUDA. Not reproduced on CUDA, and the fp32 remedy is not yet confirmed by
 the reporter — if you hit this, please say whether it helped.
 
+**`Analysis Error: custom HTTP 404` or an authentication error.**
+For a custom OpenAI-compatible provider, enter the server host, its `/v1` base, or the
+full `/v1/chat/completions` URL; the node adds the missing path automatically. Confirm
+the provider exposes a vision-capable chat-completions route and that the model name is
+the provider's loaded model ID. Add an API key only when that provider requires one;
+the node sends it as `Authorization: Bearer ...` only when non-empty.
+
 **Out of memory.**
 Lower the resolution first (768 short edge is native, but 480 works), then `length`. With
 `vae (quality)` previews, lower `preview_frames` to 4 — a VAE preview allocates as much as
@@ -544,6 +716,11 @@ They are — H3 anchors first and last frame only. Switch to **Refs ON** and the
 **The generated clip is longer than I asked for.**
 Length snaps up to the 17k+5 grid: 5, 22, 39, 56, 73, 90, 107, 124 … frames. 5 s → 124
 frames → 5.17 s. This is the model's grid, not a bug.
+
+The visible Duration slider is capped at approximately 14.37 s at 24 fps. If a connected
+automation socket supplies a longer duration, the Director clamps the render window and
+logs the correction; a warning mentioning 15.1 s means the effective snapped duration is
+past H3's trained range, not that H3 has a new 15-second-safe grid point.
 
 ## Reporting a bug
 
