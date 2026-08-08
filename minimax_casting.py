@@ -209,11 +209,28 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
             for image in (character.get("images") or [])
             if isinstance(image, dict)
         ]
+        references = []
+        for character_slot, character in enumerate(payload.get("characters", []), start=1):
+            description = str(character.get("description") or "").strip()
+            for image in character.get("images") or []:
+                if not isinstance(image, dict):
+                    continue
+                picture_index = len(references) + 1
+                references.append({
+                    "index": picture_index,
+                    "picture": "<Picture %d>" % picture_index,
+                    "h3_reference": "<Picture %d>" % picture_index,
+                    "source": "char",
+                    "character_slot": character_slot,
+                    "image": image,
+                    "description": description,
+                })
         context_data = make_context(
             prompt_context=_cast_context(payload),
             images=image_refs,
             project=project_info,
             sources={"cast": payload},
+            references=references,
         )
         return io.NodeOutput(cast_json, wardrobe_json, analyze_settings,
                              _cast_context(payload), context_data)

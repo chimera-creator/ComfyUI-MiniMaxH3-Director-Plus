@@ -285,11 +285,44 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
             for image in (collage.get("images") or [])[:1]
             if isinstance(image, dict)
         )
+        references = []
+        for character_slot, character in enumerate(payload.get("characters", []), start=1):
+            description = str(character.get("description") or "").strip()
+            for image in character.get("images") or []:
+                if not isinstance(image, dict):
+                    continue
+                picture_index = len(references) + 1
+                references.append({
+                    "index": picture_index,
+                    "picture": "<Picture %d>" % picture_index,
+                    "h3_reference": "<Picture %d>" % picture_index,
+                    "source": "char",
+                    "character_slot": character_slot,
+                    "image": image,
+                    "description": description,
+                })
+        for collage in payload.get("wardrobe_collages", []):
+            character_slot = collage.get("character_slot", 0)
+            description = str(collage.get("description") or "").strip()
+            for image in (collage.get("images") or [])[:1]:
+                if not isinstance(image, dict):
+                    continue
+                picture_index = len(references) + 1
+                references.append({
+                    "index": picture_index,
+                    "picture": "<Picture %d>" % picture_index,
+                    "h3_reference": "<Picture %d>" % picture_index,
+                    "source": "wardrobe",
+                    "character_slot": character_slot,
+                    "image": image,
+                    "description": description,
+                })
         context_data = make_context(
             prompt_context=_wardrobe_context(payload),
             images=image_refs,
             project=project,
             sources={"cast_wardrobe": payload},
+            references=references,
         )
         return io.NodeOutput(cast_wardrobe_json, _wardrobe_context(payload), context_data)
 

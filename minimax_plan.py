@@ -576,7 +576,8 @@ def classify_events(events, duration_frames, fps):
 
 def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                   use_custom_motion=True, use_custom_audio=False, override_audio=False,
-                  extra_ref_image_count=0, soundscape="", music="", prompt_format=None):
+                  extra_ref_image_count=0, soundscape="", music="", prompt_format=None,
+                  extra_ref_manifest=None):
     """Work out shots, keyframe roles, reference ordinals and the final prompt.
 
     Returns a dict; `execute` uses it to decide what media to load, the endpoint just
@@ -711,54 +712,86 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
     ref_image_slots = []     # {"source": "char"/"wardrobe"/"input"/"timeline", ...}
 
     if ref_mode_on:
-        for slot_idx, slot in enumerate(char_slots):
-            if not slot["images"]:
-                continue
-            char_tag_values[slot_idx + 1] = "<Picture %d>" % (len(ref_image_slots) + 1)
-            for img in slot["images"]:
+        manifest = extra_ref_manifest if isinstance(extra_ref_manifest, list) else []
+        manifest = [item for item in manifest if isinstance(item, dict)]
+        manifest = manifest[:MAX_REF_IMAGES]
+        if manifest and extra_ref_image_count > 0:
+            usable = manifest[:extra_ref_image_count]
+            for input_index, item in enumerate(usable):
+                source = str(item.get("source") or "input").lower()
+                if source in ("cast", "character"):
+                    source = "char"
+                elif source in ("set", "sets"):
+                    source = "location"
+                elif source not in ("char", "wardrobe", "location"):
+                    source = "input"
+                slot = {"source": source, "from_input": True,
+                        "input_index": input_index,
+                        "image": item.get("image") if isinstance(item.get("image"), dict) else {}}
+                try:
+                    character_slot = int(item.get("character_slot", item.get("slot", 0))) - 1
+                except (TypeError, ValueError):
+                    character_slot = -1
+                if source in ("char", "wardrobe") and character_slot >= 0:
+                    slot["slot"] = character_slot
+                if source == "location":
+                    try:
+                        slot["location_index"] = int(item.get("location_index", -1))
+                    except (TypeError, ValueError):
+                        slot["location_index"] = -1
+                if item.get("description"):
+                    slot["description"] = item.get("description")
+                ref_image_slots.append(slot)
+        else:
+            for slot_idx, slot in enumerate(char_slots):
+                if not slot["images"]:
+                    continue
+                char_tag_values[slot_idx + 1] = "<Picture %d>" % (len(ref_image_slots) + 1)
+                for img in slot["images"]:
+                    if len(ref_image_slots) >= MAX_REF_IMAGES:
+                        break
+                    ref_image_slots.append({"source": "char", "slot": slot_idx, "image": img})
+                    ref_image_slots[-1]["slot"] = slot_idx
+
+                if not wardrobe_collages:
+                    for item_index, item in enumerate(wardrobe_items):
+                        if slot_idx + 1 not in item.get("character_slots", item.get("characters", [])):
+                            continue
+                        for img in item.get("images", []) or []:
+                            if len(ref_image_slots) >= MAX_REF_IMAGES:
+                                break
+                            ref_image_slots.append({"source": "wardrobe", "slot": slot_idx,
+                                                    "item": item_index, "image": img})
+
+            for collage in wardrobe_collages:
                 if len(ref_image_slots) >= MAX_REF_IMAGES:
                     break
-                ref_image_slots.append({"source": "char", "slot": slot_idx, "image": img})
-                ref_image_slots[-1]["slot"] = slot_idx
-
-            if not wardrobe_collages:
-                for item_index, item in enumerate(wardrobe_items):
-                    if slot_idx + 1 not in item.get("character_slots", item.get("characters", [])):
+                try:
+                    character_slot = int(collage.get("character_slot", collage.get("slot", 0))) - 1
+                except (TypeError, ValueError):
+                    continue
+                images = collage.get("images") if isinstance(collage.get("images"), list) else []
+                for img in images[:1]:
+                    if not isinstance(img, dict) or not (img.get("name") or img.get("b64")):
                         continue
-                    for img in item.get("images", []) or []:
-                        if len(ref_image_slots) >= MAX_REF_IMAGES:
-                            break
-                        ref_image_slots.append({"source": "wardrobe", "slot": slot_idx,
-                                                "item": item_index, "image": img})
+                    ref_image_slots.append({"source": "wardrobe", "slot": character_slot,
+                                            "image": img, "description": collage.get("description", "")})
 
-        for collage in wardrobe_collages:
-            if len(ref_image_slots) >= MAX_REF_IMAGES:
-                break
-            try:
-                character_slot = int(collage.get("character_slot", collage.get("slot", 0))) - 1
-            except (TypeError, ValueError):
-                continue
-            images = collage.get("images") if isinstance(collage.get("images"), list) else []
-            for img in images[:1]:
-                if not isinstance(img, dict) or not (img.get("name") or img.get("b64")):
-                    continue
-                ref_image_slots.append({"source": "wardrobe", "slot": character_slot,
-                                        "image": img, "description": collage.get("description", "")})
+            for location_index, location in enumerate(location_references):
+                if len(ref_image_slots) >= MAX_REF_IMAGES:
+                    break
+                images = location.get("images") if isinstance(location.get("images"), list) else []
+                for img in images[:1]:
+                    if not isinstance(img, dict) or not (img.get("name") or img.get("b64")):
+                        continue
+                    ref_image_slots.append({"source": "location", "location_index": location_index,
+                                            "image": img, "description": location.get("description", "")})
 
-        for location_index, location in enumerate(location_references):
-            if len(ref_image_slots) >= MAX_REF_IMAGES:
-                break
-            images = location.get("images") if isinstance(location.get("images"), list) else []
-            for img in images[:1]:
-                if not isinstance(img, dict) or not (img.get("name") or img.get("b64")):
-                    continue
-                ref_image_slots.append({"source": "location", "location_index": location_index,
-                                        "image": img, "description": location.get("description", "")})
-
-        for _ in range(max(0, int(extra_ref_image_count))):
-            if len(ref_image_slots) >= MAX_REF_IMAGES:
-                break
-            ref_image_slots.append({"source": "input"})
+        if not (manifest and extra_ref_image_count > 0):
+            for _ in range(max(0, int(extra_ref_image_count))):
+                if len(ref_image_slots) >= MAX_REF_IMAGES:
+                    break
+                ref_image_slots.append({"source": "input"})
 
         # Timeline images in the order they appear on the timeline. `events` is already
         # chronological, so <Picture n> counts up with time. Character slots and the

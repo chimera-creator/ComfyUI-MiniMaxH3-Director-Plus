@@ -51,13 +51,14 @@ def project_details(value) -> dict:
 
 
 def make_context(prompt_context="", images=None, project=None, sources=None,
-                 image_tensor=None) -> dict:
+                 image_tensor=None, references=None) -> dict:
     """Build the stable payload emitted by Casting, Wardrobe, and Location nodes."""
     project = project if isinstance(project, dict) else {}
     return {
         "version": 1,
         "prompt_context": str(prompt_context or "").strip(),
         "images": list(images or []),
+        "references": list(references or []),
         "image_tensor": image_tensor,
         "project": project,
         "project_name": project.get("name", ""),
@@ -75,6 +76,8 @@ def normalise_context(value) -> dict:
     result = dict(value)
     result["images"] = [image for image in (result.get("images") or [])
                         if isinstance(image, dict)]
+    result["references"] = [reference for reference in (result.get("references") or [])
+                             if isinstance(reference, dict)]
     result["prompt_context"] = str(result.get("prompt_context") or result.get("context") or "").strip()
     project = result.get("project")
     if not isinstance(project, dict):

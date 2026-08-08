@@ -208,6 +208,16 @@ async def compile_prompt_endpoint(request):
     try:
         data = await request.json()
         fps = float(data.get("frame_rate") or 24.0) or 24.0
+        try:
+            enhance_data = json.loads(data.get("enhance_json") or "{}")
+        except (TypeError, ValueError):
+            enhance_data = {}
+        if not isinstance(enhance_data, dict):
+            enhance_data = {}
+        manifest = data.get("extra_ref_manifest")
+        if not isinstance(manifest, list) or not manifest:
+            manifest = enhance_data.get("references") if isinstance(enhance_data.get("references"), list) else []
+        manifest_count = int(data.get("extra_ref_image_count") or len(manifest) or 0)
         tdata = plan.merge_cast(
             plan.parse_timeline(data.get("timeline_data") or ""),
             data.get("cast_data") or data.get("cast"),
@@ -225,7 +235,8 @@ async def compile_prompt_endpoint(request):
             use_custom_motion=bool(data.get("use_custom_motion", True)),
             use_custom_audio=bool(data.get("use_custom_audio", False)),
             override_audio=bool(data.get("override_audio", False)),
-            extra_ref_image_count=int(data.get("extra_ref_image_count") or 0),
+            extra_ref_image_count=manifest_count,
+            extra_ref_manifest=manifest,
         )
 
         warnings = []

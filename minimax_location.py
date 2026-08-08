@@ -77,7 +77,7 @@ def _reference_data(cast_wardrobe, items, context=None):
                          if character.get("hired", True)]
     entries = []
 
-    def add_reference(reference, source, description=""):
+    def add_reference(reference, source, description="", **metadata):
         if len(entries) >= MAX_REFERENCE_IMAGES:
             return False
         image = _load_image(reference, context)
@@ -86,12 +86,14 @@ def _reference_data(cast_wardrobe, items, context=None):
         entries.append({
             "image": image, "reference": reference, "source": source,
             "picture_index": len(entries) + 1, "description": description,
+            **metadata,
         })
         return True
 
     for character_slot, character in enumerate(active_characters, start=1):
         for reference in character.get("images", []) or []:
-            add_reference(reference, "cast", character.get("description", ""))
+            add_reference(reference, "cast", character.get("description", ""),
+                          character_slot=character_slot)
 
     wardrobe_collages = raw.get("wardrobe_collages")
     if not isinstance(wardrobe_collages, list):
@@ -102,7 +104,8 @@ def _reference_data(cast_wardrobe, items, context=None):
                 continue
             images = collage.get("images") if isinstance(collage.get("images"), list) else []
             if images:
-                add_reference(images[0], "wardrobe", str(collage.get("description") or ""))
+                add_reference(images[0], "wardrobe", str(collage.get("description") or ""),
+                              character_slot=collage.get("character_slot", 0))
     else:
         for item in raw.get("wardrobe_items", []) or []:
             if not isinstance(item, dict):
@@ -112,12 +115,13 @@ def _reference_data(cast_wardrobe, items, context=None):
                 add_reference(images[0], "wardrobe", str(item.get("description") or ""))
 
     location_references = []
-    for item in items:
+    for location_index, item in enumerate(items):
         if not item.get("images"):
             continue
         reference = item["images"][0]
         before = len(entries)
-        if add_reference(reference, "location", item.get("description", "")):
+        if add_reference(reference, "location", item.get("description", ""),
+                         location_index=location_index):
             entry = entries[-1]
             location_references.append({
                 "images": [reference],
@@ -245,6 +249,16 @@ class MiniMaxH3LocationScout(io.ComfyNode):
             project=project_info,
             sources={"cast_wardrobe_sets": payload, "sets": {"items": items}},
             image_tensor=packed_images,
+            references=[{
+                "index": entry.get("picture_index"),
+                "picture": "<Picture %d>" % entry.get("picture_index"),
+                "h3_reference": "<Picture %d>" % entry.get("picture_index"),
+                "source": entry.get("source"),
+                "character_slot": entry.get("character_slot"),
+                "location_index": entry.get("location_index"),
+                "image": entry.get("reference"),
+                "description": entry.get("description", ""),
+            } for entry in entries],
         )
         return io.NodeOutput(
             json.dumps(payload, separators=(",", ":")),

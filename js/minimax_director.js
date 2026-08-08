@@ -12693,6 +12693,11 @@ app.registerExtension({
 
         const self = this;
         this._syncGlobalPromptFromLink = function () {
+          const enhanceJsonInput = self.inputs?.find(i => i.name === "enhance_json");
+          if (enhanceJsonInput && enhanceJsonInput.link !== null && enhanceJsonInput.link !== undefined &&
+              self._mmxEnhanceJsonApplied) {
+            return;
+          }
           const globalInput = self.inputs?.find(i => i.name === "global_prompt");
           if (globalInput && globalInput.link !== null && globalInput.link !== undefined) {
             const link = app.graph.links[globalInput.link];
@@ -12747,6 +12752,73 @@ app.registerExtension({
           }
         };
 
+        self._mmxApplyEnhanceJson = function (force = false) {
+          const input = self.inputs?.find(item => item.name === "enhance_json");
+          const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+          const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+          const raw = source?.properties?.processed_director_json || source?.properties?.director_json || "";
+          if (!raw) {
+            self._mmxEnhanceJsonApplied = "";
+            return;
+          }
+          const fingerprint = String(raw);
+          if (!force && self._mmxEnhanceJsonApplied === fingerprint) return;
+          let data = null;
+          try { data = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return; }
+          if (!data || typeof data !== "object" || !self._timelineEditor) return;
+
+          const editor = self._timelineEditor;
+          const current = editor.timeline || parseInitial("{}");
+          const supplied = data.timeline && typeof data.timeline === "object" ? data.timeline : {};
+          const next = { ...current, ...supplied };
+          if (Array.isArray(data.segments)) next.segments = data.segments;
+          for (const key of ["subject_definitions", "retention_analysis",
+            "overall_soundscape", "non_diegetic_music", "reference_mode"]) {
+            if (Object.prototype.hasOwnProperty.call(data, key)) next[key] = data[key] || "";
+          }
+          if (data.cast && Array.isArray(data.cast.characters)) {
+            next.characters = data.cast.characters.map((character) => ({
+              images: Array.isArray(character.images) ? character.images : [],
+              description: character.description || "",
+            }));
+          }
+          if (data.reference_mode) next.reference_mode = data.reference_mode;
+          if (Array.isArray(data.references) && data.references.length) next.reference_mode = "REF2VA";
+          const normalised = parseInitial(JSON.stringify(next));
+          editor.timeline = normalised;
+          editor.mainTrackEnabled = normalised.mainTrackEnabled !== false;
+          editor.audioTrackEnabled = normalised.audioTrackEnabled !== false;
+          editor.motionTrackEnabled = normalised.motionTrackEnabled !== false;
+
+          const fps = Math.max(1, Number(self.widgets?.find(w => w.name === "frame_rate")?.value) || 24);
+          const duration = Number(data.duration_seconds ?? data.duration);
+          if (Number.isFinite(duration) && duration > 0) {
+            const frames = Math.max(1, Number(data.duration_frames) || Math.round(duration * fps));
+            const startFrame = Math.max(0, Number(self.widgets?.find(w => w.name === "start_frame")?.value) || 0);
+            const startSecond = startFrame / fps;
+            const setWidget = (name, value) => {
+              const widget = self.widgets?.find(w => w.name === name);
+              if (widget) widget.value = value;
+            };
+            setWidget("duration_seconds", Number(duration.toFixed(3)));
+            setWidget("duration_frames", frames);
+            setWidget("end_frame", startFrame + frames);
+            setWidget("end_second", Number((startSecond + duration).toFixed(3)));
+            editor.timeline.normalDurationFrames = frames;
+          }
+
+          editor.loadMedia();
+          editor.updateRetakeUIState();
+          editor.updateUIFromSelection();
+          editor.syncWidgetsAndUI();
+          editor.commitChanges(true);
+          self._mmxEnhanceJsonApplied = fingerprint;
+          self._mmxSettingsRefresh?.();
+          self._mmxRefreshReferenceCounter?.();
+          self._mmxRefreshPrompt?.();
+          self.setDirtyCanvas?.(true, true);
+        };
+
         const origOnConnectionsChange = this.onConnectionsChange;
         self._mmxRefreshCharacterSlots = () => {
           self._timelineEditor?.updateCharacterSlotsUI?.();
@@ -12755,6 +12827,7 @@ app.registerExtension({
           if (origOnConnectionsChange) {
             origOnConnectionsChange.apply(this, arguments);
           }
+          self._mmxApplyEnhanceJson?.(true);
           self._syncGlobalPromptFromLink();
           self._mmxRefreshCharacterSlots?.();
           self._mmxRefreshReferenceCounter?.();
@@ -12765,6 +12838,7 @@ app.registerExtension({
           if (origOnDrawForeground) {
             origOnDrawForeground.apply(this, arguments);
           }
+          self._mmxApplyEnhanceJson?.(false);
           self._syncGlobalPromptFromLink();
         };
 
@@ -13650,6 +13724,9 @@ app.registerExtension({
         };
         const refreshPrompt = async () => {
           try {
+            const enhanceSource = originForInput(self, "enhance_json");
+            const enhanceData = readJson(enhanceSource?.properties?.processed_director_json
+              || enhanceSource?.properties?.director_json || "");
             const body = {
               timeline_data: w("timeline_data")?.value || "",
               cast_data: connectedCastData(),
@@ -13660,6 +13737,8 @@ app.registerExtension({
               use_custom_audio: !!w("use_custom_audio")?.value,
               override_audio: !!w("override_audio")?.value,
               global_prompt: self.properties?.global_prompt || "",
+              extra_ref_image_count: Array.isArray(enhanceData.references) ? enhanceData.references.length : 0,
+              extra_ref_manifest: Array.isArray(enhanceData.references) ? enhanceData.references : [],
             };
             const resp = await api.fetchApi("/minimax_director/compile_prompt", {
               method: "POST", body: JSON.stringify(body),
@@ -13705,6 +13784,7 @@ app.registerExtension({
             // honour the saved gear-menu setting on load
             self._mmxSetPromptPreview(self.properties?.showPromptPreview !== false, true);
             self._mmxRefreshTimelineLayout?.();
+            self._mmxApplyEnhanceJson?.(true);
           } catch (err) {
             console.error("[MiniMaxDirector] timeline editor init failed:", err);
           }

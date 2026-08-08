@@ -175,6 +175,67 @@ function contextFromSource(source, startImage = 0, seen = new Set()) {
   return result;
 }
 
+function contextDataFromSource(source) {
+  if (!source) return null;
+  const type = String(source.comfyClass || source.type || "").toLowerCase();
+  const refs = [];
+  const project = {
+    name: String(source.properties?.project_name || ""),
+    path: String(source.properties?.project_path || ""),
+    asset_roots: [], resources: [],
+  };
+  const add = (image, sourceName, characterSlot = null, description = "", locationIndex = null) => {
+    if (!image) return;
+    const index = refs.length + 1;
+    refs.push({ index, picture: `<Picture ${index}>`, h3_reference: `<Picture ${index}>`,
+      source: sourceName, character_slot: characterSlot, location_index: locationIndex,
+      image, description: String(description || "") });
+  };
+  const addCast = (payload) => {
+    (payload?.characters || []).filter((character) => character?.hired !== false).forEach((character, index) => {
+      const description = mergeDescription(character);
+      (character.images || []).forEach((image) => add(image, "char", index + 1, description));
+    });
+  };
+  let payload = null;
+  if (type.includes("location")) {
+    const wardrobeSource = linkedNode(source, "cast_wardrobe");
+    payload = parseJson(wardrobeSource?.properties?.cast_wardrobe_output, null) ||
+      parseJson(wardrobeSource?.widgets?.find((widget) => widget.name === "cast_wardrobe")?.value, {});
+    addCast(payload);
+    (payload?.wardrobe_collages || []).forEach((item) =>
+      (item.images || []).slice(0, 1).forEach((image) =>
+        add(image, "wardrobe", item.character_slot, item.description)));
+    const sets = parseJson(source.properties?.sets_data, {});
+    (sets?.items || []).forEach((item, index) =>
+      (item.images || []).slice(0, 1).forEach((image) =>
+        add(image, "location", null, item.description, index)));
+    payload = { ...(payload || {}), location_references: (sets?.items || []).map((item, index) => ({
+      images: item.images || [], description: item.description || "", location_index: index,
+    })) };
+  } else if (type.includes("wardrobe")) {
+    payload = parseJson(source.properties?.cast_wardrobe_output, null) || {};
+    addCast(payload);
+    (payload?.wardrobe_collages || []).forEach((item) =>
+      (item.images || []).slice(0, 1).forEach((image) =>
+        add(image, "wardrobe", item.character_slot, item.description)));
+  } else if (type.includes("casting")) {
+    payload = parseJson(source.properties?.cast_data, null) || {};
+    addCast(payload);
+  }
+  const context = contextFromSource(source);
+  return {
+    version: 1,
+    prompt_context: context.lines.join("\n"),
+    images: refs.map((item) => item.image),
+    references: refs,
+    project,
+    project_name: project.name,
+    project_path: project.path,
+    sources: payload ? { cast_wardrobe_sets: payload } : {},
+  };
+}
+
 function widgetValue(node, name, fallback = "") {
   const widget = node.widgets?.find((item) => item.name === name);
   return widget?.value ?? fallback;
@@ -191,10 +252,16 @@ app.registerExtension({
       originalCreated?.apply(this, arguments);
       const node = this;
       const processedWidget = node.widgets?.find((widget) => widget.name === "processed_prompt");
+      const processedDirectorWidget = node.widgets?.find((widget) => widget.name === "processed_director_json");
       if (processedWidget) {
         processedWidget.hidden = true;
         processedWidget.options = { ...(processedWidget.options || {}), hidden: true };
         processedWidget.computeSize = () => [0, -4];
+      }
+      if (processedDirectorWidget) {
+        processedDirectorWidget.hidden = true;
+        processedDirectorWidget.options = { ...(processedDirectorWidget.options || {}), hidden: true };
+        processedDirectorWidget.computeSize = () => [0, -4];
       }
 
       const container = document.createElement("div");
@@ -219,9 +286,20 @@ app.registerExtension({
         node.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
       };
+      const setCachedDirectorJson = (value) => {
+        const json = String(value || "");
+        if (processedDirectorWidget) {
+          processedDirectorWidget.value = json;
+          if (processedDirectorWidget.element) processedDirectorWidget.element.value = json;
+        }
+        node.properties = { ...(node.properties || {}),
+          processed_director_json: json, director_json: json };
+      };
       const invalidate = () => {
-        if (processedWidget?.value || node.properties?.processed_prompt) {
+        if (processedWidget?.value || node.properties?.processed_prompt ||
+            processedDirectorWidget?.value || node.properties?.processed_director_json) {
           setCachedPrompt("");
+          setCachedDirectorJson("");
           setStatus("Inputs changed — press Process Prompt again.");
         }
       };
@@ -255,6 +333,7 @@ app.registerExtension({
           const contextSource = contextDataSource || linkedNode(node, "context");
           const sourceContext = contextFromSource(contextSource);
           const context = sourceContext.lines.join("\n") || String(contextInput?.value || widgetValue(node, "context", "") || "");
+          const contextData = contextDataFromSource(contextSource);
           const response = await api.fetchApi("/minimax_director/enhance/process", {
             method: "POST",
             body: JSON.stringify({
@@ -276,11 +355,13 @@ app.registerExtension({
               max_words: widgetValue(node, "max_words", 500),
               unload_after: !!widgetValue(node, "unload_after", true),
               on_error: widgetValue(node, "on_error", "passthrough"),
+              context_data: contextData,
             }),
           });
           const result = await response.json();
           if (!response.ok || result.status !== "success") throw new Error(result.message || "Process failed");
           setCachedPrompt(result.prompt || "");
+          setCachedDirectorJson(result.director_json || "");
           setStatus(`Processed ${imageValues.length} reference image${imageValues.length === 1 ? "" : "s"}. Generation will reuse this prompt.`);
         } catch (error) {
           setStatus(error.message || String(error), true);
@@ -290,7 +371,9 @@ app.registerExtension({
         }
       };
 
-      clearButton.addEventListener("click", () => { setCachedPrompt(""); setStatus("Prompt cache cleared."); });
+      clearButton.addEventListener("click", () => {
+        setCachedPrompt(""); setCachedDirectorJson(""); setStatus("Prompt cache cleared.");
+      });
       processButton.addEventListener("click", () => { void process(); });
       container.appendChild(processButton);
       container.appendChild(clearButton);
@@ -314,6 +397,9 @@ app.registerExtension({
       if (node.properties?.processed_prompt && processedWidget && !processedWidget.value) {
         processedWidget.value = node.properties.processed_prompt;
       }
+      if (node.properties?.processed_director_json && processedDirectorWidget && !processedDirectorWidget.value) {
+        processedDirectorWidget.value = node.properties.processed_director_json;
+      }
       if (processedWidget?.value) setStatus("Processed prompt cached — generation will reuse it.");
     };
     const originalConfigure = nodeType.prototype.onConfigure;
@@ -322,6 +408,10 @@ app.registerExtension({
       const widget = this.widgets?.find((item) => item.name === "processed_prompt");
       if (widget && (widget.value || this.properties?.processed_prompt)) {
         widget.value = widget.value || this.properties.processed_prompt;
+      }
+      const directorWidget = this.widgets?.find((item) => item.name === "processed_director_json");
+      if (directorWidget && (directorWidget.value || this.properties?.processed_director_json)) {
+        directorWidget.value = directorWidget.value || this.properties.processed_director_json;
       }
       return result;
     };
@@ -332,6 +422,12 @@ app.registerExtension({
       if (widget && (widget.value || this.properties?.processed_prompt)) {
         widget.value = "";
         this.properties = { ...(this.properties || {}), processed_prompt: "" };
+      }
+      const directorWidget = this.widgets?.find((item) => item.name === "processed_director_json");
+      if (directorWidget && (directorWidget.value || this.properties?.processed_director_json)) {
+        directorWidget.value = "";
+        this.properties = { ...(this.properties || {}),
+          processed_director_json: "", director_json: "" };
       }
       return result;
     };

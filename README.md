@@ -98,7 +98,7 @@ Eight nodes, category **MiniMax H3**:
 | **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Its typed `CONTEXT DATA` output also carries project asset paths. Saves set data under `Projects/<project>/sets/`. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
-| **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
+| **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images and emits Director-ready JSON for duration, shots, guide fields, and ordered H3 references. |
 
 Editing features carried over from LTX Director: main track, reference-video track, audio
 track, ruler in seconds or frames, drag / resize / copy / paste, prompt zones per segment,
@@ -254,6 +254,7 @@ Location Scout CONTEXT -> Enhance Prompt.context (legacy text fallback)
 Location Scout IMAGE REFS -> Enhance Prompt.images (legacy image fallback)
 Enhance Prompt prompt -> Director.global_prompt
 Enhance Prompt ref_images -> Director.ref_images
+Enhance Prompt director_json -> Director.enhance_json
 ```
 
 `CONTEXT DATA` is the preferred Enhance Prompt connection. Casting Director, Wardrobe
@@ -263,6 +264,12 @@ location descriptions, and the selected project's asset roots. Location Scout al
 its prepacked image tensor, so project-backed references can reach the VLM without adding
 separate image sockets. The old `CONTEXT` and `IMAGE REFS` sockets remain available for
 existing workflows.
+
+Connect both `director_json` and `ref_images` from Enhance Prompt to the Director for the
+complete hand-off. The JSON is the reference manifest: every image has its exact
+`<Picture N>` ordinal, source, character/location assignment, and description. The image
+batch supplies the pixels in that same order. If `ref_images` is not connected, the
+Director also attempts to resolve named images from the JSON project resources.
 
 The Director can still be used by itself. External cast, wardrobe, location, and Enhance
 connections are optional; unconnected Director character slots, timeline prompts, and
@@ -601,6 +608,14 @@ same ordered images to the local vision model; the same batch comes out of `ref_
 so what the model described is exactly what H3 conditions on. The older direct image
 sockets are retained as a fallback for existing graphs.
 
+The `director_json` output contains `duration_seconds`, `duration_frames`, parsed `shots`
+with segment prompts and timings, `subject_definitions`, `retention_analysis`,
+`overall_soundscape`, `non_diegetic_music`, the generated prompt, and an ordered
+`references`/`reference_images` manifest using H3's `<Picture N>` names. Connect it to the
+Director's `enhance_json` input. The Director applies those values to its timeline editor,
+guide fields, duration controls, cast references, and reference numbering; changing the
+JSON source updates the UI while it is connected.
+
 Use **PROCESS PROMPT** after the cast, wardrobe, location, idea, and model settings are ready.
 This runs the VLM, spicy second pass, and sound-line completion immediately and stores the
 result on the node. The Director generation queue reuses that stored prompt, so those LLM
@@ -628,6 +643,7 @@ as you connect, up to nine, and close the gap again when you disconnect.
 | `idea` | What you want, in plain words. |
 | `context_data` | Preferred typed context from Casting, Wardrobe, or Location Scout. Includes ordered images, descriptions, passthrough source data, and project asset roots. |
 | `context` | Legacy text context fallback from Location Scout, including cast, wardrobe, and ordered `<image N>` location references. |
+| `director_json` | Output JSON for the Director's `enhance_json` input. It maps generated shots, duration, guide fields, cast descriptions, and ordered `<Picture N>` references. |
 | `preset` | `global` writes scene, style, subjects and lighting and leaves the shots to your timeline. `storyboard` writes the whole shot sequence with timestamps — only for timelines whose segments carry no prompt text, or the two shot numberings collide. |
 | `system_prompt` | Overrides the built-in instructions, which follow MiniMax's own prompt-writing guide. |
 | `provider` / `base_url` / `model` / `api_key` | Ollama, LM Studio, or any OpenAI-compatible endpoint. `api_key` is optional and is sent as a Bearer token only when set. `http://` is added if you leave the base URL off; host and port only, no path. |

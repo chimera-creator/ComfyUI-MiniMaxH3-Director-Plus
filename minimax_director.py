@@ -39,7 +39,9 @@ from comfy_api.latest import io
 
 from . import minimax_media as media
 from . import minimax_plan as plan
-from .minimax_core import core
+from .minimax_core import core, extra
+from .minimax_context import reference_tensors
+from .minimax_prompt_data import parse_json
 from .minimax_projects import project_source_data
 
 log = logging.getLogger(__name__)
@@ -67,6 +69,30 @@ def _unpack(out):
     if isinstance(out, dict) and isinstance(out.get("result"), (tuple, list)):
         return tuple(out["result"])
     return (out,)
+
+
+def _load_enhance_reference_batch(enhance_data):
+    """Best-effort fallback when the Enhance JSON is connected without ref_images."""
+    references = enhance_data.get("references") if isinstance(enhance_data, dict) else []
+    if not isinstance(references, list):
+        return None
+    images = [item.get("image") for item in references
+              if isinstance(item, dict) and isinstance(item.get("image"), dict)]
+    tensors = reference_tensors(
+        images,
+        {"project": enhance_data.get("project") if isinstance(enhance_data, dict) else {}},
+        limit=plan.MAX_REF_IMAGES,
+    )
+    if not tensors:
+        return None
+    flat = []
+    for tensor in tensors:
+        flat.extend(tensor[index:index + 1] for index in range(tensor.shape[0]))
+    try:
+        return extra("nodes_post_processing", "batch_images").batch_images(flat[:plan.MAX_REF_IMAGES])
+    except Exception as error:
+        log.warning("[MiniMaxDirector] could not batch Enhance JSON references: %s", error)
+        return None
 
 
 def _snap(value, multiple):
@@ -255,6 +281,11 @@ class MiniMaxH3Director(io.ComfyNode):
                     "global_prompt", multiline=True, default="", force_input=True, optional=True,
                     tooltip="Conditions the whole video: style, scene, characters. Written above the storyboard.",
                 ),
+                io.String.Input(
+                    "enhance_json", multiline=True, force_input=True, optional=True,
+                    tooltip="Optional Director JSON output from MiniMax H3 Enhance Prompt Plus. "
+                            "Fills duration, shot prompts, guide fields, and ordered H3 references.",
+                ),
                 io.Float.Input("start_second", default=0.0, min=0.0, max=1000.0, step=0.01,
                                tooltip="Start of the render window, in seconds."),
                 io.Float.Input("end_second", default=5.0, min=0.0, max=1000.0, step=0.01,
@@ -383,7 +414,8 @@ class MiniMaxH3Director(io.ComfyNode):
                 use_custom_audio=False, inpaint_audio=True, use_custom_motion=True,
                 override_audio=False, ref_image_size="match",
                 shift_video=12.0, shift_audio=3.0, ref_images=None,
-                start=None, end=None, duration=None, cast=None, project=None) -> io.NodeOutput:
+                start=None, end=None, duration=None, cast=None, project=None,
+                enhance_json=None) -> io.NodeOutput:
 
         mm = core()
         saved = project_source_data(project, "director")
@@ -397,12 +429,38 @@ class MiniMaxH3Director(io.ComfyNode):
                 cast = saved.get("cast")
                 if isinstance(cast, dict):
                     cast = json.dumps(cast, separators=(",", ":"))
+        enhance_data = parse_json(enhance_json) or {}
+        enhance_duration = enhance_data.get("duration_seconds", enhance_data.get("duration"))
+        if enhance_data:
+            timeline = plan.parse_timeline(timeline_data)
+            supplied_timeline = enhance_data.get("timeline")
+            if isinstance(supplied_timeline, dict):
+                timeline.update(supplied_timeline)
+            elif isinstance(enhance_data.get("segments"), list):
+                timeline["segments"] = enhance_data["segments"]
+            for key in ("subject_definitions", "retention_analysis",
+                        "overall_soundscape", "non_diegetic_music", "reference_mode"):
+                if key in enhance_data:
+                    timeline[key] = enhance_data.get(key) or ""
+            timeline_data = json.dumps(timeline, separators=(",", ":"))
+            if "global_prompt" in enhance_data:
+                global_prompt = enhance_data.get("global_prompt") or ""
+            if not cast and isinstance(enhance_data.get("cast"), dict):
+                cast = json.dumps(enhance_data["cast"], separators=(",", ":"))
         tdata = plan.merge_cast(plan.parse_timeline(timeline_data), cast)
         fps = float(frame_rate) if frame_rate else 24.0
+        try:
+            if enhance_duration is not None and float(enhance_duration) > 0:
+                if duration is None or float(duration or 0) <= 0:
+                    duration = float(enhance_duration)
+        except (TypeError, ValueError):
+            pass
 
         win_start, duration_frames = resolve_window(
             tdata, fps, start_frame, duration_frames, start, end, duration)
 
+        if ref_images is None and enhance_data:
+            ref_images = _load_enhance_reference_batch(enhance_data)
         extra_refs = 0
         if ref_images is not None:
             try:
@@ -415,7 +473,8 @@ class MiniMaxH3Director(io.ComfyNode):
                                use_custom_motion=use_custom_motion,
                                use_custom_audio=use_custom_audio,
                                override_audio=override_audio,
-                               extra_ref_image_count=extra_refs)
+                               extra_ref_image_count=extra_refs,
+                               extra_ref_manifest=enhance_data.get("references"))
 
         length = p["length"]
         if length > plan.TRAINED_MAX_FRAMES:
@@ -484,7 +543,15 @@ class MiniMaxH3Director(io.ComfyNode):
             input_cursor = 0
             for slot in p["ref_image_slots"]:
                 src = slot["source"]
-                if src in ("char", "wardrobe", "location"):
+                if slot.get("from_input"):
+                    if ref_images is None or input_cursor >= int(ref_images.shape[0]):
+                        log.warning("[MiniMaxDirector] Enhance JSON reference %d has no matching image tensor.",
+                                    input_cursor + 1)
+                        input_cursor += 1
+                        continue
+                    ref_image_tensors.append(ref_images[input_cursor:input_cursor + 1])
+                    input_cursor += 1
+                elif src in ("char", "wardrobe", "location"):
                     img = slot["image"]
                     ref_image_tensors.append(
                         media.load_image_source(img.get("b64", ""), img.get("name", "")))

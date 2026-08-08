@@ -2,8 +2,8 @@
 
 The node hands up to nine reference images plus a one-line wish to Ollama / LM Studio /
 any OpenAI-compatible endpoint, and returns text meant for the Director's `global_prompt`
-input. The same images come back out of `ref_images`, so what the model described is
-exactly what the Director conditions on.
+input. The same images come back out of `ref_images`, and `director_json` carries the
+parsed duration, shots, guide fields, and ordered reference manifest for the Director.
 
 The single thing that has to be right here: the Director already compiles a structured
 MiniMax prompt (subject_definitions / retention_analysis / detailed_description /
@@ -16,6 +16,7 @@ import logging
 import re
 import base64
 import io as _io
+import json
 
 import numpy as np
 import torch
@@ -28,6 +29,7 @@ from server import PromptServer
 from . import minimax_media as media
 from .minimax_context import normalise_context, reference_tensors, MiniMaxH3Context
 from .minimax_core import extra
+from .minimax_prompt_data import build_director_payload, parse_json
 
 log = logging.getLogger(__name__)
 
@@ -477,6 +479,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                 tooltip="Prompt materialized by the Process button. When present, "
                                         "the generation queue reuses it and does not call the LLM "
                                         "again. Clear it and press Process after changing inputs."),
+                io.String.Input("processed_director_json", multiline=True, default="", optional=True,
+                                tooltip="Director JSON materialized by the Process button. Hidden in the UI "
+                                        "and reused with the cached prompt."),
             ],
             outputs=[
                 io.String.Output(display_name="prompt",
@@ -488,6 +493,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                 tooltip="The duration you set above, passed on so you only "
                                         "type it once. Wire into the Director's `duration` "
                                         "input (the connection-only one, in seconds)."),
+                io.String.Output(display_name="director_json",
+                                 tooltip="Director-ready JSON containing duration, shots, guide fields, "
+                                         "and ordered H3 <Picture N> reference metadata."),
             ],
         )
 
@@ -497,7 +505,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                       use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
                       on_error="passthrough", context="", processed_prompt="",
-                      context_data=None) -> io.NodeOutput:
+                      context_data=None, processed_director_json="") -> io.NodeOutput:
         typed_context = normalise_context(context_data)
         context_has_images = isinstance(context_data, dict) and (
             "image_tensor" in context_data or "images" in context_data
@@ -509,6 +517,11 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                         limit=MAX_IMAGES)
         else:
             tensors = _collect(images)
+        if not typed_context and tensors:
+            typed_context = {
+                "images": [{} for _ in range(min(MAX_IMAGES, len(tensors)))],
+                "references": [{"image": {}} for _ in range(min(MAX_IMAGES, len(tensors)))],
+            }
         if len(tensors) > MAX_IMAGES:
             log.warning("[MiniMaxEnhance] %d images connected, MiniMax H3 takes at most %d — "
                         "dropping the rest.", len(tensors), MAX_IMAGES)
@@ -532,7 +545,12 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         cached_prompt = str(processed_prompt or "").strip()
         if cached_prompt:
             log.info("[MiniMaxEnhance] using processed prompt; skipping LLM calls")
-            return io.NodeOutput(cached_prompt, batched, float(duration_seconds))
+            cached_json = parse_json(processed_director_json)
+            if not cached_json:
+                cached_json = build_director_payload(
+                    cached_prompt, float(duration_seconds), typed_context, preset)
+            return io.NodeOutput(cached_prompt, batched, float(duration_seconds),
+                                 json.dumps(cached_json, separators=(",", ":")))
 
         provider = (provider or "ollama").lower()
         defaults = media._PROVIDER_DEFAULTS.get(provider, media._PROVIDER_DEFAULTS["ollama"])
@@ -647,7 +665,10 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                     await media.unload_model(provider, url, spicy_model_name)
 
         log.info("[MiniMaxEnhance] %d chars:\n%s", len(prompt), prompt)
-        return io.NodeOutput(prompt, batched, float(duration_seconds))
+        director_data = build_director_payload(prompt, float(duration_seconds),
+                                               typed_context, preset)
+        return io.NodeOutput(prompt, batched, float(duration_seconds),
+                             json.dumps(director_data, separators=(",", ":")))
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3EnhancePromptPlusCS": MiniMaxH3EnhancePrompt}
@@ -699,8 +720,11 @@ async def process_enhance_endpoint(request):
             on_error=data.get("on_error", "passthrough"),
             context=data.get("context", ""),
             processed_prompt="",
+            context_data=data.get("context_data"),
+            processed_director_json="",
         )
-        return web.json_response({"status": "success", "prompt": output[0]})
+        return web.json_response({"status": "success", "prompt": output[0],
+                                  "director_json": output[3]})
     except Exception as error:
         log.exception("[MiniMaxEnhance] Process action failed")
         return web.json_response({"status": "error", "message": str(error)}, status=500)
