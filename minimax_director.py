@@ -358,6 +358,10 @@ class MiniMaxH3Director(io.ComfyNode):
                 io.Float.Input("duration", force_input=True, optional=True, default=0.0,
                                max=plan.TRAINED_MAX_GRID_SECONDS,
                                tooltip="Automation (connection-only). Render length in SECONDS."),
+                io.String.Input(
+                    "compiled_prompt", multiline=True, default="", optional=True,
+                    tooltip="Internal frozen copy of the COMPILED PROMPT panel. This exact text is encoded for generation.",
+                ),
             ],
             outputs=[
                 io.Model.Output(display_name="model"),
@@ -415,7 +419,7 @@ class MiniMaxH3Director(io.ComfyNode):
                 override_audio=False, ref_image_size="match",
                 shift_video=12.0, shift_audio=3.0, ref_images=None,
                 start=None, end=None, duration=None, cast=None, project=None,
-                enhance_json=None) -> io.NodeOutput:
+                enhance_json=None, compiled_prompt="") -> io.NodeOutput:
 
         mm = core()
         saved = project_source_data(project, "director")
@@ -601,7 +605,12 @@ class MiniMaxH3Director(io.ComfyNode):
                          "timeline keyframes were added as <Picture i> references instead.")
                 first_frame = last_frame = None
 
-        prompt = p["prompt"]
+        # Queue serialization materializes the live COMPILED PROMPT panel into this
+        # hidden input. Keep planning media and reference ordinals from the timeline,
+        # but make the displayed Director text authoritative for H3 conditioning.
+        prompt = str(compiled_prompt or "").strip() or p["prompt"]
+        if compiled_prompt and prompt != p["prompt"]:
+            log.info("[MiniMaxDirector] encoding the frozen COMPILED PROMPT from the Director UI.")
         log.info("[MiniMaxDirector] %s%s | %dx%d | %d frames (%.2fs @24fps) | %d shots | "
                  "refs: %d img / %d vid / %d audio",
                  p["mode"], " (retake)" if retake else "", width, height, length,

@@ -271,7 +271,9 @@ descriptors are resolved from Comfy input files or the project resources. The le
 `ref_images` and duration wires may remain visible, but queue serialization replaces all
 Enhance-to-Director links with the frozen Director JSON and Director widget values. Enhance,
 Casting Director, Wardrobe Director, and Location Scout therefore do not execute when Run
-is pressed; only the Director's finalized sequence moves into generation.
+is pressed; only the Director's finalized sequence moves into generation. Immediately before
+queue serialization, the Director refreshes **COMPILED PROMPT** and freezes that exact text
+into its hidden `compiled_prompt` value. That visible prompt is what H3 encodes.
 
 The Director can still be used by itself. External cast, wardrobe, location, and Enhance
 connections are optional; unconnected Director character slots, timeline prompts, and

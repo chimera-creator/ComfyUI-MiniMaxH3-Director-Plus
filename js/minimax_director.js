@@ -63,6 +63,13 @@ function mmxdEnhanceSourceForDirector(director) {
   return null;
 }
 
+function mmxdEnhanceDirectorJson(source) {
+  if (!source) return "";
+  const widget = source.widgets?.find((item) => item.name === "processed_director_json");
+  return source.properties?.processed_director_json
+    || source.properties?.director_json || widget?.value || "";
+}
+
 function mmxdFreezeDirectorAuthoringInputs(result) {
   const output = result?.output;
   if (!output || typeof output !== "object") return result;
@@ -70,12 +77,13 @@ function mmxdFreezeDirectorAuthoringInputs(result) {
     if (mmxdNodeType(director) !== "minimaxh3directorpluscs") continue;
     const promptNode = output[String(director.id)] || output[director.id];
     if (!promptNode?.inputs) continue;
+    const compiledPrompt = String(director._mmxCompiledPrompt || "").trim();
+    if (compiledPrompt) promptNode.inputs.compiled_prompt = compiledPrompt;
     const enhanceSource = mmxdEnhanceSourceForDirector(director);
     const storedRaw = director.properties?.authoring_director_json || "";
-    const liveRaw = enhanceSource
-      ? (enhanceSource.properties?.processed_director_json
-        || enhanceSource.properties?.director_json || "")
-      : storedRaw;
+    // Once imported, the handoff belongs to Director. Clearing or changing Enhance
+    // authoring inputs must not erase a sequence the Director is already editing.
+    const liveRaw = mmxdEnhanceDirectorJson(enhanceSource) || storedRaw;
     if (!enhanceSource && !liveRaw) continue;
     if (enhanceSource && !liveRaw) {
       throw new Error(
@@ -162,7 +170,7 @@ const applyDirectorWardrobeItems = (cast) => {
   };
 };
 
-const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
+const HIDDEN_WIDGET_NAMES = ["timeline_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio", "compiled_prompt"];
 
 function hideWidget(w) {
   if (!w) return;
@@ -12678,6 +12686,9 @@ app.registerExtension({
             // Import a newly processed handoff before serialization, but do not force
             // the same Enhance result back over edits subsequently made in Director.
             node._mmxApplyEnhanceJson?.(false);
+            // Materialize the exact text visible in COMPILED PROMPT before ComfyUI
+            // serializes the Director. This is the authoritative generation prompt.
+            await node._mmxCompilePromptNow?.();
           }
         }
         const result = await originalGraphToPrompt.apply(this, args);
@@ -12861,14 +12872,9 @@ app.registerExtension({
           const input = self.inputs?.find(item => item.name === "enhance_json");
           const link = input?.link != null ? app.graph?.links?.[input.link] : null;
           const source = link ? app.graph?.getNodeById(link.origin_id) : null;
-          const raw = source?.properties?.processed_director_json || source?.properties?.director_json || "";
+          const raw = mmxdEnhanceDirectorJson(source);
           if (!raw) {
             self._mmxEnhanceJsonApplied = "";
-            if (source && self.properties?.authoring_director_json) {
-              const nextProperties = { ...(self.properties || {}) };
-              delete nextProperties.authoring_director_json;
-              self.properties = nextProperties;
-            }
             return;
           }
           const fingerprint = String(raw);
@@ -13887,11 +13893,11 @@ app.registerExtension({
             return "";
           }
         };
-        const refreshPrompt = async () => {
+        const refreshPrompt = async (strict = false) => {
           try {
             const enhanceSource = mmxdOriginForInput(self, "enhance_json");
-            const enhanceData = mmxdReadJson(enhanceSource?.properties?.processed_director_json
-              || enhanceSource?.properties?.director_json || "");
+            const enhanceData = mmxdReadJson(mmxdEnhanceDirectorJson(enhanceSource)
+              || self.properties?.authoring_director_json || "");
             const body = {
               timeline_data: w("timeline_data")?.value || "",
               cast_data: connectedCastData(),
@@ -13912,6 +13918,8 @@ app.registerExtension({
             if (d.status !== "success") throw new Error(d.message || "compile failed");
             pText.textContent = d.prompt || "";
             self._mmxCompiledPrompt = d.prompt || "";
+            const compiledWidget = w("compiled_prompt");
+            if (compiledWidget) compiledWidget.value = self._mmxCompiledPrompt;
             self._mmxCompiledPromptMeta = {
               mode: d.mode, format: d.format, shots: d.shots, length: d.length,
               seconds: d.seconds, refs: d.refs, warnings: d.warnings || [],
@@ -13924,12 +13932,18 @@ app.registerExtension({
             pBadge.textContent = "preview unavailable";
             pWarn.textContent = String(e.message || e);
             pWarn.style.display = pCollapsed ? "none" : "block";
+            if (strict) throw e;
           }
           self.setDirtyCanvas(true, false);
+          return self._mmxCompiledPrompt || "";
         };
         this._mmxRefreshPrompt = () => {
           clearTimeout(pTimer);
           pTimer = setTimeout(refreshPrompt, 350);
+        };
+        this._mmxCompilePromptNow = () => {
+          clearTimeout(pTimer);
+          return refreshPrompt(true);
         };
 
         setTimeout(() => {
