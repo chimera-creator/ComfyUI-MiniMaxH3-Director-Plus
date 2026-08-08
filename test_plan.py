@@ -241,6 +241,24 @@ check_in("wardrobe collage gets its own prompt section and picture reference",
          collage_prompt["prompt"])
 check_not_in("wardrobe description stays out of character section",
              "a red jacket", collage_prompt["prompt"].split("\n\n")[0])
+anatomy_cast = plan.merge_cast({}, json.dumps({
+    "characters": [{"images": [{"name": "char.png"}],
+                    "pronouns": "she",
+                    "appearance": "She has brown eyes.",
+                    "wardrobe": "she is wearing a blue shirt."}],
+    "wardrobe_collages": [{"character_slot": 1,
+                            "images": [{"name": "wardrobe-collage.png"}],
+                            "description": "a blue shirt",
+                            "anatomy_description": "a distinctive tattoo",
+                            "item_count": 2}],
+}))
+anatomy_prompt = compile(tl([img(0, 144)], ref_mode="ON",
+                             characters=anatomy_cast["characters"],
+                             wardrobe_collages=anatomy_cast["wardrobe_collages"]))
+check_in("Anatomy follows wardrobe items in the wardrobe sentence",
+         "a blue shirt. her body has a distinctive tattoo.", anatomy_prompt["prompt"])
+check_not_in("Anatomy does not use the default masculine pronoun",
+             "his body has", anatomy_prompt["prompt"])
 check("ref_images input slots sit between character and timeline",
       [s["source"] for s in compile(tl([img(0, 144)], ref_mode="ON", characters=chars),
                                     extra_ref_image_count=2)["ref_image_slots"]],

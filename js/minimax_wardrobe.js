@@ -382,10 +382,17 @@ app.registerExtension({
           const images = assigned.flatMap((item) => item.images || []);
           const collage = await makeCollage(images);
           if (!collage) continue;
+          const wardrobeDescriptions = assigned
+            .filter((item) => item.category !== "Anatomy")
+            .map((item) => item.description).filter(Boolean);
+          const anatomyDescriptions = assigned
+            .filter((item) => item.category === "Anatomy")
+            .map((item) => item.description).filter(Boolean);
           wardrobeCollages.push({
             character_slot: characterSlot,
             images: [{ b64: collage, name: `wardrobe_collage_char${characterSlot}.jpg` }],
-            description: assigned.map((item) => item.description).filter(Boolean).join("; "),
+            description: wardrobeDescriptions.join("; "),
+            anatomy_description: anatomyDescriptions.join("; "),
             item_count: images.length,
           });
         }

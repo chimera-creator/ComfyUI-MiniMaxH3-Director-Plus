@@ -15,6 +15,7 @@ actually sent would be worse than no preview.
 
 import json
 import logging
+import re
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +138,7 @@ def parse_cast(cast_data):
             "appearance": appearance,
             "wardrobe": wardrobe,
             "description": description,
+            "pronouns": str(item.get("pronouns", item.get("pronoun", "auto")) or "auto").strip().lower(),
             "hired": True,
         })
     wardrobe_items = []
@@ -164,6 +166,7 @@ def parse_cast(cast_data):
         wardrobe_items.append({
             "images": clean_images[:1],
             "description": str(item.get("description") or "").strip(),
+            "category": str(item.get("category") or "Full Outfits").strip(),
             "character_slots": clean_assignments,
         })
     wardrobe_collages = []
@@ -189,6 +192,7 @@ def parse_cast(cast_data):
             "character_slot": character_slot,
             "images": clean_images[:1],
             "description": str(collage.get("description") or "").strip(),
+            "anatomy_description": str(collage.get("anatomy_description") or "").strip(),
             "item_count": int(collage.get("item_count") or 0),
         })
     return {"characters": characters, "wardrobe_items": wardrobe_items,
@@ -285,7 +289,43 @@ def build_subject_definitions(char_slots, ref_image_slots, ref_video_segs, ref_a
     return lines, subject_of_slot
 
 
-def build_wardrobe_definitions(wardrobe_collages, ref_image_slots, subject_of_slot):
+def _pronoun_forms(character):
+    """Return (subject, possessive) forms for an anatomy description."""
+    character = character if isinstance(character, dict) else {}
+    raw = str(character.get("pronouns", character.get("pronoun", "auto")) or "auto").strip().lower()
+    if raw in {"she", "she/her", "her", "hers"}:
+        return "she", "her"
+    if raw in {"they", "they/them", "them", "their", "theirs"}:
+        return "they", "their"
+    if raw in {"he", "he/him", "him", "his"}:
+        return "he", "his"
+
+    text = " ".join(str(character.get(key) or "") for key in
+                     ("wardrobe", "appearance", "description")).lower()
+    if re.search(r"\b(she|her|woman|girl|female)\b", text):
+        return "she", "her"
+    if re.search(r"\b(they|them|their|nonbinary|non-binary)\b", text):
+        return "they", "their"
+    return "he", "his"
+
+
+def _anatomy_sentence(description, character):
+    """Turn item phrases into the requested pronoun-aware anatomy sentence."""
+    description = str(description or "").strip()
+    if not description:
+        return ""
+    _subject, possessive = _pronoun_forms(character)
+    description = description[:1].lower() + description[1:]
+    if not re.match(r"^(?:a|an)\s+", description, re.IGNORECASE):
+        description = "a " + description
+    sentence = "%s body has %s" % (possessive, description)
+    if not sentence.endswith((".", "!", "?")):
+        sentence += "."
+    return sentence
+
+
+def build_wardrobe_definitions(wardrobe_collages, ref_image_slots, subject_of_slot,
+                               char_slots=None):
     """Describe each per-character wardrobe collage in its own prompt section."""
     lines = []
     wardrobe_number = 0
@@ -302,11 +342,20 @@ def build_wardrobe_definitions(wardrobe_collages, ref_image_slots, subject_of_sl
         wardrobe_number += 1
         pictures = " and ".join("<Picture %d>" % ordinal for ordinal in ordinals)
         description = str(collage.get("description") or "").strip()
-        suffix = (": " + description) if description else "."
+        anatomy_description = str(collage.get("anatomy_description") or "").strip()
+        line = "<Wardrobe %d> is assigned to <Subject %d> and shown in %s" \
+            % (wardrobe_number, subject, pictures)
+        suffix = (": " + description) if description else ""
         if description and not description.endswith((".", "!", "?")):
             suffix += "."
-        lines.append("<Wardrobe %d> is assigned to <Subject %d> and shown in %s%s"
-                     % (wardrobe_number, subject, pictures, suffix))
+        line += suffix
+        if not line.endswith((".", "!", "?")):
+            line += "."
+        character = (char_slots or [])[character_slot] if char_slots and character_slot < len(char_slots) else {}
+        anatomy_sentence = _anatomy_sentence(anatomy_description, character)
+        if anatomy_sentence:
+            line += " " + anatomy_sentence
+        lines.append(line)
     return lines
 
 
@@ -530,7 +579,9 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                        if appearance or wardrobe
                        else char_info.get("description", "") or "")
         char_slots.append({"images": images_list, "appearance": appearance,
-                           "wardrobe": wardrobe, "description": description})
+                           "wardrobe": wardrobe, "description": description,
+                           "pronouns": str(char_info.get("pronouns", char_info.get("pronoun", "auto")) or "auto").strip().lower(),
+                           "anatomy": ""})
 
     wardrobe_items = [item for item in (tdata.get("wardrobe_items", []) or [])
                       if isinstance(item, dict)]
@@ -541,6 +592,7 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
     if not wardrobe_collages:
         for slot_index, slot in enumerate(char_slots):
             assigned_descriptions = []
+            anatomy_descriptions = []
             for item in wardrobe_items:
                 assignments = item.get("character_slots", item.get("characters", []))
                 if slot_index + 1 not in assignments:
@@ -556,12 +608,19 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                     sentence = "he is wearing " + fragment
                 if sentence[-1:] not in ".!?":
                     sentence += "."
-                assigned_descriptions.append(sentence)
+                if str(item.get("category") or "Full Outfits").strip() == "Anatomy":
+                    anatomy_descriptions.append(text)
+                else:
+                    assigned_descriptions.append(sentence)
             if assigned_descriptions:
                 slot["wardrobe"] = " ".join(
                     part for part in (slot.get("wardrobe", ""), *assigned_descriptions) if part)
+            if anatomy_descriptions:
+                slot["anatomy"] = _anatomy_sentence("; ".join(anatomy_descriptions), slot)
+            if assigned_descriptions or anatomy_descriptions:
                 slot["description"] = " ".join(
-                    part for part in (slot.get("appearance", ""), slot["wardrobe"]) if part)
+                    part for part in (slot.get("appearance", ""), slot.get("wardrobe", ""),
+                                      slot.get("anatomy", "")) if part)
 
     # --- shots + image events ---
     shots, events = [], []
@@ -775,7 +834,7 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         subject_lines, subject_of_slot = build_subject_definitions(
             char_slots, ref_image_slots, ref_video_segs, ref_audio_segs)
         wardrobe_lines = build_wardrobe_definitions(
-            wardrobe_collages, ref_image_slots, subject_of_slot)
+            wardrobe_collages, ref_image_slots, subject_of_slot, char_slots)
         # a named subject beats a bare picture label: it survives across cuts
         for slot, subject in subject_of_slot.items():
             char_tag_values[slot] = "<Subject %d>" % subject

@@ -289,6 +289,11 @@ becomes Director slot 1 when slot 1 is not hired. Use **REMOVE** to clear a cast
 An external cast replaces only the Director's character slots; the Director's timeline,
 prompt overrides and sound fields remain independent.
 
+Each cast member also has a **Pronouns** setting (**Auto**, **He / Him**, **She / Her**, or
+**They / Them**). Wardrobe items categorized as **Anatomy** follow the clothing items in
+the wardrobe prompt and use that cast member's possessive pronoun, such as `her body has a`
+or `his body has a`.
+
 The **MiniMax H3 Wardrobe Director Plus** has eighteen item slots. Drop one clothing or
 accessory reference image into an item, enter its item description, and assign it to one
 or more active characters. It creates one collage per character containing every assigned

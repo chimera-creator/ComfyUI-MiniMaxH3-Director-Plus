@@ -138,12 +138,16 @@ def _build_wardrobe_collages(active_characters, items):
         ]
         source_images = []
         descriptions = []
+        anatomy_descriptions = []
         for item in assigned_items:
             image = _load_item_image(item["images"][0])
             if image is not None:
                 source_images.append(image)
             if item.get("description"):
-                descriptions.append(item["description"])
+                if item.get("category") == "Anatomy":
+                    anatomy_descriptions.append(item["description"])
+                else:
+                    descriptions.append(item["description"])
         collage = _write_wardrobe_collage(source_images)
         if collage is None:
             continue
@@ -151,6 +155,7 @@ def _build_wardrobe_collages(active_characters, items):
             "character_slot": character_slot,
             "images": [collage],
             "description": "; ".join(descriptions),
+            "anatomy_description": "; ".join(anatomy_descriptions),
             "item_count": len(source_images),
         })
     return collages

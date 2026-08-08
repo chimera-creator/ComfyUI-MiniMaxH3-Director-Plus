@@ -5,10 +5,25 @@ import json
 from comfy_api.latest import io
 
 MAX_CHARACTERS = 9
+PRONOUN_OPTIONS = ("auto", "he", "she", "they")
+
+
+def _normalise_pronouns(value):
+    value = str(value or "auto").strip().lower()
+    aliases = {
+        "he/him": "he", "him": "he", "his": "he",
+        "she/her": "she", "her": "she", "hers": "she",
+        "they/them": "they", "them": "they", "their": "they",
+    }
+    value = aliases.get(value, value)
+    return value if value in PRONOUN_OPTIONS else "auto"
 
 
 def _empty_character():
-    return {"images": [], "appearance": "", "wardrobe": "", "description": "", "hired": False}
+    return {
+        "images": [], "appearance": "", "wardrobe": "", "description": "",
+        "pronouns": "auto", "hired": False,
+    }
 
 
 def _merge_character_description(item):
@@ -76,6 +91,7 @@ def _normalise_cast(cast_data):
                 "appearance": str(item.get("appearance") or ""),
                 "wardrobe": str(item.get("wardrobe") or ""),
                 "description": _merge_character_description(item),
+                "pronouns": _normalise_pronouns(item.get("pronouns", item.get("pronoun"))),
                 # Casts saved before the hire toggle existed remain active.
                 "hired": _is_hired(item.get("hired")),
             })

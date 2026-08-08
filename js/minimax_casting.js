@@ -12,9 +12,15 @@ const CASTING_DEFAULTS = {
 };
 const MAX_CAST_IMAGES = 9;
 const MAX_CHARACTERS = 9;
+const PRONOUN_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "he", label: "He / Him" },
+  { value: "she", label: "She / Her" },
+  { value: "they", label: "They / Them" },
+];
 
 const emptyCharacter = () => ({
-  images: [], appearance: "", wardrobe: "", description: "", hired: false,
+  images: [], appearance: "", wardrobe: "", description: "", pronouns: "auto", hired: false,
 });
 
 const isHired = (character) => character?.hired === undefined || character.hired !== false;
@@ -62,6 +68,8 @@ function parseCast(value) {
         appearance: hasSplit ? appearance : legacyDescription,
         wardrobe: hasSplit ? wardrobe : "",
         description: legacyDescription,
+        pronouns: ["auto", "he", "she", "they"].includes(item?.pronouns)
+          ? item.pronouns : "auto",
         // Casts saved before the hire toggle existed remain active.
         hired: isHired(item),
       };
@@ -115,6 +123,9 @@ const CASTING_STYLES = `
   .mmxd-casting-field-label { display:block; color:#777; font-size:8px; line-height:10px; text-transform:uppercase; letter-spacing:.35px; }
   .mmxd-casting-description { width:100%; height:28px; box-sizing:border-box; padding:2px 4px; resize:none; outline:none; background:#111; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-family:inherit; font-size:9px; }
   .mmxd-casting-description:focus { border-color:#4fff8f; }
+  .mmxd-casting-pronoun-row { display:flex; align-items:center; gap:5px; margin-top:5px; }
+  .mmxd-casting-pronoun-label { color:#777; font-size:8px; text-transform:uppercase; letter-spacing:.35px; }
+  .mmxd-casting-pronoun-select { flex:1; min-width:0; height:22px; box-sizing:border-box; background:#111; color:#ddd; border:1px solid #333; border-radius:4px; padding:2px 4px; font-size:9px; outline:none; }
   .mmxd-casting-footer { color:#666; font-size:9px; margin-top:5px; }
 `;
 
@@ -447,6 +458,30 @@ app.registerExtension({
               previews.appendChild(analyze);
             }
             slot.appendChild(previews);
+            const pronounRow = document.createElement("div");
+            pronounRow.className = "mmxd-casting-pronoun-row";
+            const pronounLabel = document.createElement("label");
+            pronounLabel.className = "mmxd-casting-pronoun-label";
+            pronounLabel.textContent = "Pronouns";
+            const pronounSelect = document.createElement("select");
+            pronounSelect.className = "mmxd-casting-pronoun-select";
+            for (const optionData of PRONOUN_OPTIONS) {
+              const option = document.createElement("option");
+              option.value = optionData.value;
+              option.textContent = optionData.label;
+              pronounSelect.appendChild(option);
+            }
+            pronounSelect.value = ["auto", "he", "she", "they"].includes(character.pronouns)
+              ? character.pronouns : "auto";
+            pronounSelect.title = "Pronouns used for Anatomy wardrobe descriptions";
+            pronounSelect.addEventListener("click", (event) => event.stopPropagation());
+            pronounSelect.addEventListener("change", () => {
+              character.pronouns = pronounSelect.value;
+              save();
+            });
+            pronounRow.appendChild(pronounLabel);
+            pronounRow.appendChild(pronounSelect);
+            slot.appendChild(pronounRow);
             const addDescriptionField = (labelText, key, placeholder) => {
               const field = document.createElement("div");
               field.className = "mmxd-casting-field";
