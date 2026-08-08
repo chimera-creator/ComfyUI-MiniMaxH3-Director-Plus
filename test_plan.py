@@ -411,6 +411,7 @@ overridden_sections = compile(
     tl([img(0, 144, prompt="the subject looks toward camera")], ref_mode="ON",
        characters=chars,
        subject_definitions="<Subject 1> is the detective shown in <Picture 1>.",
+       summary="[reference generation] The detective studies the room.",
        retention_analysis="Keep the detective's hat and scar consistent across every shot."))
 check_in("timeline subject_definitions overrides the automatic section",
          "subject_definitions: <Subject 1> is the detective shown in <Picture 1>.",
@@ -418,6 +419,13 @@ check_in("timeline subject_definitions overrides the automatic section",
 check_in("timeline retention_analysis overrides the automatic section",
          "retention_analysis: Keep the detective's hat and scar consistent across every shot.",
          overridden_sections["prompt"])
+check_in("timeline summary reaches the compiled full-reference prompt",
+         "summary: [reference generation] The detective studies the room.",
+         overridden_sections["prompt"])
+check("summary remains between definitions and retention analysis",
+      overridden_sections["prompt"].index("subject_definitions:") <
+      overridden_sections["prompt"].index("summary:") <
+      overridden_sections["prompt"].index("retention_analysis:"), True)
 check_not_in("automatic subject_definitions is replaced",
              "the character shown in <Picture 1>", overridden_sections["prompt"])
 check_not_in("automatic retention_analysis is replaced",

@@ -340,7 +340,7 @@ app.registerExtension({
               images: imageValues,
               idea: widgetValue(node, "idea", ""),
               context,
-              preset: widgetValue(node, "preset", "global (scene + style)"),
+              preset: widgetValue(node, "preset", "Full H3 Prompt to Director"),
               system_prompt: widgetValue(node, "system_prompt", ""),
               duration_seconds: widgetValue(node, "duration_seconds", 5),
               provider: widgetValue(node, "provider", "ollama"),

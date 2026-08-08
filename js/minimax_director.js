@@ -893,6 +893,7 @@ function parseInitial(jsonStr) {
     overall_soundscape: "",
     non_diegetic_music: "",
     subject_definitions: "",
+    summary: "",
     retention_analysis: "",
     mainTrackEnabled: true,
     audioTrackEnabled: true,
@@ -926,6 +927,7 @@ function parseInitial(jsonStr) {
       if (p.overall_soundscape !== undefined) parsed.overall_soundscape = p.overall_soundscape;
       if (p.non_diegetic_music !== undefined) parsed.non_diegetic_music = p.non_diegetic_music;
       if (p.subject_definitions !== undefined) parsed.subject_definitions = p.subject_definitions;
+      if (p.summary !== undefined) parsed.summary = p.summary;
       if (p.retention_analysis !== undefined) parsed.retention_analysis = p.retention_analysis;
       if (p.mainTrackEnabled !== undefined) parsed.mainTrackEnabled = p.mainTrackEnabled;
       if (p.audioTrackEnabled !== undefined) parsed.audioTrackEnabled = p.audioTrackEnabled;
@@ -12772,7 +12774,7 @@ app.registerExtension({
           const supplied = data.timeline && typeof data.timeline === "object" ? data.timeline : {};
           const next = { ...current, ...supplied };
           if (Array.isArray(data.segments)) next.segments = data.segments;
-          for (const key of ["subject_definitions", "retention_analysis",
+          for (const key of ["subject_definitions", "summary", "retention_analysis",
             "overall_soundscape", "non_diegetic_music", "reference_mode"]) {
             if (Object.prototype.hasOwnProperty.call(data, key)) next[key] = data[key] || "";
           }

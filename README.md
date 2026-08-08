@@ -618,6 +618,18 @@ same ordered images to the local vision model; the same batch comes out of `ref_
 so what the model described is exactly what H3 conditions on. The older direct image
 sockets are retained as a fallback for existing graphs.
 
+The default preset is **Full H3 Prompt to Director**. Its first-pass request contains, in
+order, final character details (including Wardrobe Director replacements), one
+`<Picture N> is a location for the sequence` line per location, the Enhance `idea`, and
+the effective `system_prompt` guide. The response must end in a valid `DIRECTOR_JSON`
+object. Enhance parses and normalizes that object, then replaces its reference list with
+the real ordered image manifest before emitting `director_json`; a model therefore cannot
+renumber or reorder the images passed to the Director.
+The JSON carries the six full-reference rewrite sections in guide order:
+`subject_definitions`, `summary`, `retention_analysis`, `detailed_description`,
+`overall_soundscape`, and `non_diegetic_music`. Enhance parses the shot markers inside
+`detailed_description` into the Director's `shots`, `segments`, and timeline fields.
+
 The `director_json` output contains `duration_seconds`, `duration_frames`, parsed `shots`
 with segment prompts and timings, `subject_definitions`, `retention_analysis`,
 `overall_soundscape`, `non_diegetic_music`, the generated prompt, and an ordered
@@ -654,7 +666,7 @@ as you connect, up to nine, and close the gap again when you disconnect.
 | `context_data` | Preferred typed context from Casting, Wardrobe, or Location Scout. Includes ordered images, descriptions, passthrough source data, and project asset roots. |
 | `context` | Legacy text context fallback from Location Scout, including cast, wardrobe, and ordered `<image N>` location references. |
 | `director_json` | Output JSON for the Director's `enhance_json` input. It maps generated shots, duration, guide fields, cast descriptions, and ordered `<Picture N>` references. |
-| `preset` | `global` writes scene, style, subjects and lighting and leaves the shots to your timeline. `storyboard` writes the whole shot sequence with timestamps — only for timelines whose segments carry no prompt text, or the two shot numberings collide. |
+| `preset` | **Full H3 Prompt to Director** is the default and emits validated Director JSON from the complete cast/wardrobe/location request. `global` and `storyboard` remain available for legacy workflows. |
 | `system_prompt` | Overrides the built-in instructions, which follow MiniMax's own prompt-writing guide. |
 | `provider` / `base_url` / `model` / `api_key` | Ollama, LM Studio, or any OpenAI-compatible endpoint. `api_key` is optional and is sent as a Bearer token only when set. `http://` is added if you leave the base URL off; host and port only, no path. |
 | `use_spicy_model` | Runs the first-pass prompt through a second model with a sensual/mature detail pass. Off by default. |

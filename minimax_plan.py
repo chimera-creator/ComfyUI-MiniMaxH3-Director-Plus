@@ -436,7 +436,7 @@ def alignment_instruction(has_first, has_last, shot_count, seconds):
 
 def compile_storyboard_minimax(global_prompt, shots, soundscape="", music="",
                                subject_lines=None, wardrobe_lines=None, retention_lines=None,
-                               instruction="", location_lines=None):
+                               instruction="", location_lines=None, summary=""):
     """The notation MiniMax documents in VIDEO_PROMPT_WRITING_GUIDE_*.md.
 
     `integrated_multimodal_description: [Shot 1] … [Shot 2] At 00:05.000, …`, with the
@@ -457,6 +457,8 @@ def compile_storyboard_minimax(global_prompt, shots, soundscape="", music="",
         parts.append("wardrobe_definitions: " + " ".join(wardrobe_lines))
     if location_lines:
         parts.append("location_definitions: " + " ".join(location_lines))
+    if (summary or "").strip():
+        parts.append("summary: " + summary.strip())
     if retention_lines:
         parts.append("retention_analysis: " + " ".join(retention_lines))
 
@@ -602,6 +604,7 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
         music = tdata.get("non_diegetic_music", "") or ""
     subject_override = (tdata.get("subject_definitions", "") or "").strip()
     retention_override = (tdata.get("retention_analysis", "") or "").strip()
+    summary = (tdata.get("summary", "") or "").strip()
 
     ref_mode_on = ref_mode_from(tdata)
     if prompt_format is None:
@@ -976,7 +979,7 @@ def plan_timeline(tdata, win_start, duration_frames, fps, global_prompt="",
                 written_shots, actual_seconds)
         prompt = compile_storyboard_minimax(global_prompt, shots, soundscape, music,
                                             subject_lines, wardrobe_lines, retention_lines,
-                                            instruction, location_lines)
+                                            instruction, location_lines, summary)
     else:
         prompt = compile_storyboard(global_prompt, shots, window_seconds)
         if ref_notes:

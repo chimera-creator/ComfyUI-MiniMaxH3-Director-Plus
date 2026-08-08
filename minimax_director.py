@@ -438,7 +438,7 @@ class MiniMaxH3Director(io.ComfyNode):
                 timeline.update(supplied_timeline)
             elif isinstance(enhance_data.get("segments"), list):
                 timeline["segments"] = enhance_data["segments"]
-            for key in ("subject_definitions", "retention_analysis",
+            for key in ("subject_definitions", "summary", "retention_analysis",
                         "overall_soundscape", "non_diegetic_music", "reference_mode"):
                 if key in enhance_data:
                     timeline[key] = enhance_data.get(key) or ""

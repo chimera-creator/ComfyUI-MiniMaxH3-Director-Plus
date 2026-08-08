@@ -5,12 +5,10 @@ any OpenAI-compatible endpoint, and returns text meant for the Director's `globa
 input. The same images come back out of `ref_images`, and `director_json` carries the
 parsed duration, shots, guide fields, and ordered reference manifest for the Director.
 
-The single thing that has to be right here: the Director already compiles a structured
-MiniMax prompt (subject_definitions / retention_analysis / detailed_description /
-overall_soundscape / non_diegetic_music). The global prompt is one ingredient inside that.
-If the VLM emits section labels or reference numbers of its own, you get structure nested
-inside structure and numbering that collides with the Director's own — so the system
-prompts forbid both, and `_clean()` removes them anyway when the model ignores that.
+The default Full H3 preset gives the model the Director's exact ordered reference manifest
+and asks for a terminal JSON object. The response is normalized against the real context,
+so model-generated numbering can never reorder the images sent through `ref_images`.
+Legacy global/storyboard presets retain their original section/reference cleanup.
 """
 import logging
 import re
@@ -29,12 +27,13 @@ from server import PromptServer
 from . import minimax_media as media
 from .minimax_context import normalise_context, reference_tensors, MiniMaxH3Context
 from .minimax_core import extra
-from .minimax_prompt_data import build_director_payload, parse_json
+from .minimax_prompt_data import build_director_payload, extract_audio_music, parse_json
 
 log = logging.getLogger(__name__)
 
 MAX_IMAGES = 9          # matches plan.MAX_REF_IMAGES (ref2va path, from the model card)
 
+PRESET_FULL = "Full H3 Prompt to Director"
 PRESET_GLOBAL = "global (scene + style)"
 PRESET_STORYBOARD = "storyboard (shots + timings)"
 
@@ -83,6 +82,29 @@ _FORBIDDEN = """NEVER WRITE
 
 OUTPUT
 Only the prompt text. Nothing before it, nothing after it.
+"""
+
+SYSTEM_FULL = """You write a complete full-reference MiniMax-H3 prompt package for a Director node.
+
+Use every supplied character, final wardrobe, location, concept, and ordered picture
+reference. A <Picture N> tag always identifies the Nth image in the supplied batch. Never
+renumber, omit, swap, or invent picture tags. Refer to recurring people as <Subject N>
+after binding each subject to its cast picture.
+
+Write these six sections in this exact order: subject_definitions, summary,
+retention_analysis, detailed_description, overall_soundscape, non_diegetic_music. The
+detailed_description must describe visual style, framing, subjects, final clothing,
+environment, lighting, actions, state changes, camera behavior, physical sound, and
+dialogue in playback order. Use the MiniMax shot notation requested by the supplied guide.
+Keep every shot inside the target duration and make later shot start times strictly increase.
+Keep the detailed description to about {budget} English words.
+
+Write the six-section H3 prompt first. Then write the literal marker DIRECTOR_JSON: and one
+valid JSON object matching the supplied schema. Put all six complete section values in that
+object. The JSON must use double-quoted keys and strings, no comments, no trailing commas,
+no markdown fence, and no text after its closing brace. Do not summarize or contradict the
+prose. The application validates the object, derives timeline segments from
+detailed_description, and attaches the actual image data before sending it to the Director.
 """
 
 SYSTEM_GLOBAL = """You write the opening block of a MiniMax-H3 video prompt.
@@ -167,7 +189,11 @@ marks, verbatim and untranslated.
 %s
 %s""" % (_CAMERA, _AUDIO, _FORBIDDEN)
 
-_SYSTEM = {PRESET_GLOBAL: SYSTEM_GLOBAL, PRESET_STORYBOARD: SYSTEM_STORYBOARD}
+_SYSTEM = {
+    PRESET_FULL: SYSTEM_FULL,
+    PRESET_GLOBAL: SYSTEM_GLOBAL,
+    PRESET_STORYBOARD: SYSTEM_STORYBOARD,
+}
 
 # The guide's own figure, used when the budget is switched off.
 _GUIDE_WORDS = "350 to 500"
@@ -211,6 +237,311 @@ def system_for(preset, max_words):
     """
     template = _SYSTEM.get(preset, SYSTEM_GLOBAL)
     return template.replace("{budget}", str(int(max_words)) if max_words else _GUIDE_WORDS)
+
+
+def _full_context_data(context, duration_seconds):
+    """Return the Director's canonical cast/reference view for the full preset."""
+    return build_director_payload("", duration_seconds, context, PRESET_FULL)
+
+
+def _reference_without_image(reference):
+    if not isinstance(reference, dict):
+        return {}
+    keep = ("index", "picture", "h3_reference", "source", "character_slot",
+            "location_index", "description")
+    return {key: reference.get(key) for key in keep if reference.get(key) is not None}
+
+
+def _full_character_details(context_data):
+    subject_definitions = str(context_data.get("subject_definitions") or "").strip()
+    cast = context_data.get("cast") if isinstance(context_data.get("cast"), dict) else {}
+    references = context_data.get("references") if isinstance(context_data.get("references"), list) else []
+    subject_of_slot = {}
+    next_subject = 1
+    for slot, _character in enumerate(cast.get("characters", []) or [], start=1):
+        if any(item.get("source") in ("char", "cast") and
+               int(item.get("character_slot", 0) or 0) == slot for item in references):
+            subject_of_slot[slot] = next_subject
+            next_subject += 1
+    lines = [subject_definitions] if subject_definitions else []
+    for slot, subject in subject_of_slot.items():
+        wardrobe_refs = [item for item in references
+                         if item.get("source") == "wardrobe" and
+                         int(item.get("character_slot", 0) or 0) == slot]
+        if not wardrobe_refs:
+            continue
+        pictures = " and ".join(item.get("picture") or item.get("h3_reference")
+                                for item in wardrobe_refs)
+        descriptions = " ".join(str(item.get("description") or "").strip()
+                                for item in wardrobe_refs).strip()
+        line = "The final wardrobe for <Subject %d> is shown in %s" % (subject, pictures)
+        if descriptions:
+            line += ": " + descriptions
+        if line[-1] not in ".!?":
+            line += "."
+        lines.append(line)
+    return " ".join(lines).strip()
+
+
+def _merge_model_subjects(authoritative, model_value, references):
+    """Keep cast bindings authoritative while retaining safe model-defined extra subjects."""
+    authoritative = str(authoritative or "").strip()
+    model_value = str(model_value or "").strip()
+    if not model_value:
+        return authoritative
+    valid_pictures = {int(item.get("index") or 0) for item in references
+                      if isinstance(item, dict) and int(item.get("index") or 0) > 0}
+    cast_subjects = [int(value) for value in re.findall(
+        r"<Subject\s+(\d+)>", authoritative, re.I)]
+    last_cast_subject = max(cast_subjects) if cast_subjects else 0
+    chunks = [chunk.strip() for chunk in re.split(
+        r"(?=(?:<Subject|<Picture|<Video|<Audio)\s+\d+>)", model_value, flags=re.I)
+              if chunk.strip()]
+    extras = []
+    for chunk in chunks:
+        subject_match = re.match(r"<Subject\s+(\d+)>", chunk, re.I)
+        if subject_match and int(subject_match.group(1)) <= last_cast_subject:
+            continue
+        pictures = {int(value) for value in re.findall(r"<Picture\s+(\d+)>", chunk, re.I)}
+        if pictures and not pictures.issubset(valid_pictures):
+            continue
+        if chunk not in authoritative and chunk not in extras:
+            extras.append(chunk)
+    return " ".join(part for part in (authoritative, " ".join(extras)) if part).strip()
+
+
+def _full_location_details(context_data):
+    references = context_data.get("references") if isinstance(context_data.get("references"), list) else []
+    lines = []
+    for reference in references:
+        if reference.get("source") not in ("location", "set", "sets"):
+            continue
+        picture = reference.get("picture") or reference.get("h3_reference")
+        if not picture:
+            continue
+        description = str(reference.get("description") or "").strip()
+        line = "%s is a location for the sequence" % picture
+        if description:
+            line += ": " + description
+        if line[-1] not in ".!?":
+            line += "."
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def build_full_h3_request(idea, context, guide, duration_seconds):
+    """Build the exact first-pass request used by Full H3 Prompt to Director."""
+    context_data = _full_context_data(context, duration_seconds)
+    references = [_reference_without_image(item)
+                  for item in context_data.get("references", [])]
+    duration = max(0.1, float(duration_seconds or 0.1))
+    character_details = _full_character_details(context_data) or "No cast characters were supplied."
+    location_details = _full_location_details(context_data) or "No location references were supplied."
+    concept = str(idea or "").strip() or "Describe what these images show as a video."
+    schema = {
+        "version": 1,
+        "duration_seconds": duration,
+        "subject_definitions": context_data.get("subject_definitions", ""),
+        "summary": "[reference generation] One short paragraph describing the target video and reference roles.",
+        "retention_analysis": context_data.get("retention_analysis", ""),
+        "detailed_description": (
+            "Opening style and composition. [Shot 1] Shot action, camera behavior, "
+            "state changes, sound, and dialogue in playback order."
+        ),
+        "overall_soundscape": "Ambience and physical sounds across the full video.",
+        "non_diegetic_music": "Audience-only instrumentation, tempo, and dynamics, or N/A.",
+        # These derived fields make the model's timing intent explicit. Enhance validates
+        # them against detailed_description and rebuilds the final timeline JSON.
+        "global_prompt": "Opening style, composition, subjects, and location.",
+        "shots": [{
+            "number": 1, "start": 0.0, "end": duration, "length": duration,
+            "prompt": "Shot action, camera behavior, state changes, and audible events.",
+        }],
+        "references": references,
+    }
+    return (
+        "This is the character details:\n%s\n\n"
+        "Location details:\n%s\n\n"
+        "Concept:\n%s\n\n"
+        "Follow this guide completely for how to write the prompt in the correct format:\n%s\n\n"
+        "End the response with DIRECTOR_JSON: followed by one valid JSON object with this "
+        "exact field structure. Replace the example prompt values with the finished result. "
+        "Keep the supplied reference entries in this exact order; do not add, remove, or "
+        "renumber them. The closing brace must be the final character of the response.\n%s"
+        % (character_details, location_details, concept, guide,
+           json.dumps(schema, indent=2, ensure_ascii=False))
+    )
+
+
+def _extract_response_json(value):
+    """Extract a terminal DIRECTOR_JSON object and return it with the preceding prose."""
+    text = media.strip_thinking(str(value or "")).strip()
+    marker = re.search(r"DIRECTOR_JSON\s*:\s*", text, re.I)
+    search_start = marker.end() if marker else 0
+    prose = text[:marker.start()].strip() if marker else text
+    decoder = json.JSONDecoder()
+    starts = [index for index in range(search_start, len(text)) if text[index] == "{"]
+    for start in starts:
+        try:
+            parsed, _end = decoder.raw_decode(text[start:])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed, prose
+    direct = parse_json(text)
+    return (direct, "") if direct else ({}, prose)
+
+
+def _valid_model_director_json(value):
+    if not isinstance(value, dict):
+        return False
+    required_strings = ("subject_definitions", "summary", "retention_analysis",
+                        "detailed_description", "overall_soundscape",
+                        "non_diegetic_music")
+    if any(not isinstance(value.get(key), str) for key in required_strings):
+        return False
+    if not isinstance(value.get("shots"), list) or not isinstance(value.get("references"), list):
+        return False
+    try:
+        return float(value.get("duration_seconds")) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+_FULL_SECTION = re.compile(
+    r"^\s*(subject_definitions|summary|wardrobe_definitions|location_definitions|"
+    r"retention_analysis|detailed_description|integrated_multimodal_description|"
+    r"overall_soundscape|non_diegetic_music)\s*:\s*",
+    re.I | re.M,
+)
+
+
+def _full_text_body(value):
+    """Remove outer H3 section wrappers while retaining the generated description."""
+    text = str(value or "").strip()
+    matches = list(_FULL_SECTION.finditer(text))
+    if not matches:
+        return text
+    sections = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[match.group(1).lower()] = text[match.end():end].strip()
+    body = (sections.get("detailed_description") or
+            sections.get("integrated_multimodal_description") or "")
+    audio = sections.get("overall_soundscape", "")
+    music = sections.get("non_diegetic_music", "")
+    if audio:
+        body = (body + "\nAudio: " + audio).strip()
+    if music:
+        body = (body + "\nMusic: " + music).strip()
+    return body
+
+
+def _shot_time(value):
+    seconds = max(0.0, float(value or 0.0))
+    minutes = int(seconds // 60)
+    remainder = seconds - minutes * 60
+    return "%02d:%06.3f" % (minutes, remainder)
+
+
+def _body_from_response(model_data, prose, duration_seconds):
+    detailed_description = str(model_data.get("detailed_description") or "").strip()
+    global_prompt = str(model_data.get("global_prompt") or "").strip()
+    shots = model_data.get("shots") if isinstance(model_data.get("shots"), list) else []
+    shot_parts = []
+    duration = max(0.1, float(duration_seconds or 0.1))
+    previous_start = 0.0
+    for index, shot in enumerate(shots, start=1):
+        if not isinstance(shot, dict):
+            continue
+        prompt = str(shot.get("prompt") or shot.get("segment_prompt") or "").strip()
+        if not prompt:
+            continue
+        try:
+            start = max(0.0, min(duration, float(shot.get("start", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            start = previous_start
+        start = max(previous_start, start)
+        previous_start = start
+        number = int(shot.get("number") or index)
+        marker = "[Shot %d] " % number if not shot_parts else \
+            "[Shot %d] At %s, " % (number, _shot_time(start))
+        shot_parts.append(marker + prompt)
+    body = detailed_description or \
+        "\n\n".join(part for part in (global_prompt, " ".join(shot_parts)) if part)
+    if not body:
+        body = str(model_data.get("prompt") or prose or "").strip()
+    body = _full_text_body(body)
+    audio = str(model_data.get("overall_soundscape") or "").strip()
+    music = str(model_data.get("non_diegetic_music") or "").strip()
+    if audio and not re.search(r"^\s*(?:audio|sound|sfx)\s*:", body, re.I | re.M):
+        body += "\nAudio: " + audio
+    if music and not re.search(r"^\s*(?:music|score)\s*:", body, re.I | re.M):
+        body += "\nMusic: " + music
+    return body.strip()
+
+
+def _clean_full_body(value, max_words=0):
+    """Use the storyboard cleaner without deleting valid Director picture/subject tags."""
+    text = _full_text_body(value)
+    saved = []
+
+    def stash(match):
+        saved.append(match.group(0))
+        return "MMXREFTAG%dTOKEN" % (len(saved) - 1)
+
+    text = _RE_REFTAG.sub(stash, text)
+    text = clean_prompt(text, PRESET_STORYBOARD, max_words=max_words)
+    for index, original in enumerate(saved):
+        text = text.replace("MMXREFTAG%dTOKEN" % index, original)
+    return text
+
+
+def build_full_director_payload(prompt, model_data, duration_seconds, context):
+    """Normalize model JSON to the actual Director contract and real reference order."""
+    payload = build_director_payload(prompt, duration_seconds, context, PRESET_FULL)
+    payload["summary"] = "[reference generation] The target video uses the supplied ordered references."
+    if isinstance(model_data, dict):
+        summary = str(model_data.get("summary") or "").strip()
+        if summary:
+            payload["summary"] = summary
+            payload["timeline"]["summary"] = summary
+        for key in ("retention_analysis",):
+            value = str(model_data.get(key) or "").strip()
+            if value:
+                payload[key] = value
+                payload["timeline"][key] = value
+        # With no cast context, retain a model-supplied binding. When context exists, the
+        # deterministic binding wins because it is the only source that knows the exact
+        # image batch and final Wardrobe Director assignment.
+        if not payload.get("subject_definitions"):
+            value = str(model_data.get("subject_definitions") or "").strip()
+            if value:
+                payload["subject_definitions"] = value
+                payload["timeline"]["subject_definitions"] = value
+    payload["timeline"]["summary"] = payload["summary"]
+    character_details = _full_character_details(payload)
+    if isinstance(model_data, dict):
+        character_details = _merge_model_subjects(
+            character_details, model_data.get("subject_definitions"),
+            payload.get("references", []),
+        )
+    if character_details:
+        payload["subject_definitions"] = character_details
+        payload["timeline"]["subject_definitions"] = character_details
+    detailed, _audio, _music = extract_audio_music(prompt)
+    payload["detailed_description"] = detailed
+    parts = [
+        "subject_definitions: " + str(payload.get("subject_definitions") or ""),
+        "summary: " + str(payload.get("summary") or ""),
+        "retention_analysis: " + str(payload.get("retention_analysis") or ""),
+        "detailed_description: " + detailed,
+        "overall_soundscape: " + str(payload.get("overall_soundscape") or ""),
+        "non_diegetic_music: " + str(payload.get("non_diegetic_music") or ""),
+    ]
+    payload["full_prompt"] = "\n\n".join(parts)
+    payload["model_json_valid"] = _valid_model_director_json(model_data)
+    return payload
 
 # --------------------------------------------------------------------------------------
 # post-processing: what the model was told not to write, removed when it wrote it anyway
@@ -413,13 +744,13 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                     tooltip="Preferred typed context from Casting, Wardrobe, or Location Scout. "
                             "Carries ordered images, prompt data, and project asset paths.",
                 ),
-                io.Combo.Input("preset", options=[PRESET_GLOBAL, PRESET_STORYBOARD],
-                               default=PRESET_GLOBAL,
-                               tooltip="'global' writes scene, style, subjects and lighting and "
-                                       "leaves the shots to your timeline. 'storyboard' writes "
-                                       "the whole shot sequence with timestamps — use it only "
-                                       "when your timeline segments carry no prompt text, or "
-                                       "the two shot numberings will collide."),
+                io.Combo.Input("preset", options=[PRESET_FULL, PRESET_GLOBAL, PRESET_STORYBOARD],
+                               default=PRESET_FULL,
+                               tooltip="'Full H3 Prompt to Director' combines final cast and "
+                                       "wardrobe details, numbered locations, the concept, and "
+                                       "the selected system guide, then returns validated "
+                                       "Director JSON. Legacy global and storyboard modes remain "
+                                       "available for existing workflows."),
                 io.String.Input("system_prompt", multiline=True, default="", optional=True,
                                 tooltip="Overrides the built-in instructions. Leave empty to use "
                                         "the preset's own, which is derived from MiniMax's "
@@ -500,7 +831,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         )
 
     @classmethod
-    async def execute(cls, images=None, idea="", preset=PRESET_GLOBAL, system_prompt="",
+    async def execute(cls, images=None, idea="", preset=PRESET_FULL, system_prompt="",
                       duration_seconds=5.0, provider="ollama", base_url="", model="", api_key="",
                       use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
@@ -547,8 +878,12 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
             log.info("[MiniMaxEnhance] using processed prompt; skipping LLM calls")
             cached_json = parse_json(processed_director_json)
             if not cached_json:
-                cached_json = build_director_payload(
-                    cached_prompt, float(duration_seconds), typed_context, preset)
+                if preset == PRESET_FULL:
+                    cached_json = build_full_director_payload(
+                        cached_prompt, {}, float(duration_seconds), typed_context)
+                else:
+                    cached_json = build_director_payload(
+                        cached_prompt, float(duration_seconds), typed_context, preset)
             return io.NodeOutput(cached_prompt, batched, float(duration_seconds),
                                  json.dumps(cached_json, separators=(",", ":")))
 
@@ -562,26 +897,31 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         spicy_system = (spicy_system_prompt or "").strip() or SYSTEM_SPICY
         system = (system_prompt or "").strip() or system_for(preset, max_words)
 
-        user = (idea or "").strip() or "Describe what these images show as a video."
-        context_parts = []
-        typed_context_text = typed_context.get("prompt_context", "")
-        if typed_context_text:
-            context_parts.append(typed_context_text)
-        legacy_context = (context or "").strip()
-        if legacy_context and legacy_context not in context_parts:
-            context_parts.append(legacy_context)
-        if context_parts:
-            user = "\n\n".join(context_parts) + "\n\n" + user
-        if preset == PRESET_STORYBOARD:
-            user = "%s\n\nTarget duration: %.1f seconds." % (user, float(duration_seconds))
-        # Recency matters more than instruction count for small models: without this
-        # reminder qwen3.5:9b dropped the two closing lines in roughly half the runs.
-        user += ("\n\nRemember: finish with the Audio: line and then the Music: line, "
-                 "and write nothing after them.")
+        if preset == PRESET_FULL:
+            user = build_full_h3_request(
+                idea, typed_context, system, float(duration_seconds))
+        else:
+            user = (idea or "").strip() or "Describe what these images show as a video."
+            context_parts = []
+            typed_context_text = typed_context.get("prompt_context", "")
+            if typed_context_text:
+                context_parts.append(typed_context_text)
+            legacy_context = (context or "").strip()
+            if legacy_context and legacy_context not in context_parts:
+                context_parts.append(legacy_context)
+            if context_parts:
+                user = "\n\n".join(context_parts) + "\n\n" + user
+            if preset == PRESET_STORYBOARD:
+                user = "%s\n\nTarget duration: %.1f seconds." % (user, float(duration_seconds))
+            # Recency matters more than instruction count for small models: without this
+            # reminder qwen3.5:9b dropped the two closing lines in roughly half the runs.
+            user += ("\n\nRemember: finish with the Audio: line and then the Music: line, "
+                     "and write nothing after them.")
 
         b64 = _tensor_to_b64(batched, int(max_image_size), 88) if batched is not None else []
         log.info("[MiniMaxEnhance] %s via %s (%s, model '%s'), %d image(s)...",
-                 "storyboard" if preset == PRESET_STORYBOARD else "global",
+                 ("full" if preset == PRESET_FULL else
+                  ("storyboard" if preset == PRESET_STORYBOARD else "global")),
                  provider, url, model_name, len(b64))
 
         # The token cap is only a runaway backstop; the shaping is done afterwards by
@@ -594,12 +934,23 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         # here: the VLM and H3 are usually on the same card, and a 7B vision model still
         # resident when sampling starts is the difference between a render and an OOM.
         keep_alive = 0 if unload_after else 300
+        model_director_data = {}
         try:
             raw = await media.vlm_generate(b64, user, provider, url, model_name,
                                            system_prompt=system, timeout=300,
                                            max_tokens=cap, keep_alive=keep_alive,
                                            api_key=api_key)
-            prompt = clean_prompt(raw, preset, max_words=int(max_words))
+            if preset == PRESET_FULL:
+                model_director_data, prose = _extract_response_json(raw)
+                prompt = _clean_full_body(
+                    _body_from_response(model_director_data, prose, duration_seconds),
+                    max_words=int(max_words),
+                )
+                if not _valid_model_director_json(model_director_data):
+                    log.warning("[MiniMaxEnhance] full preset returned missing or incomplete "
+                                "DIRECTOR_JSON; normalizing it against the prompt and real context.")
+            else:
+                prompt = clean_prompt(raw, preset, max_words=int(max_words))
             if not prompt:
                 raise media.VLMError("The model returned nothing usable.")
 
@@ -614,7 +965,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                         b64, spicy_user, provider, url, spicy_model_name,
                         system_prompt=spicy_system, timeout=300,
                         max_tokens=cap, keep_alive=keep_alive, api_key=api_key)
-                    spicy_prompt = clean_prompt(spicy_raw, preset, max_words=int(max_words))
+                    spicy_prompt = (_clean_full_body(spicy_raw, max_words=int(max_words))
+                                    if preset == PRESET_FULL else
+                                    clean_prompt(spicy_raw, preset, max_words=int(max_words)))
                     if not spicy_prompt:
                         raise media.VLMError("The spicy model returned nothing usable.")
                     prompt = spicy_prompt
@@ -640,7 +993,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                         spicy_model_name if use_spicy_model else model_name,
                         system_prompt=SYSTEM_AUDIO_ONLY, timeout=120, max_tokens=300,
                         keep_alive=keep_alive, api_key=api_key)
-                    merged = clean_prompt("%s\n%s" % (prompt, tail), preset)
+                    merged = (_clean_full_body("%s\n%s" % (prompt, tail))
+                              if preset == PRESET_FULL else
+                              clean_prompt("%s\n%s" % (prompt, tail), preset))
                     if re.search(r"^\s*(?:audio|sound|sfx)\s*:", merged, re.I | re.M):
                         prompt = merged
                 except media.VLMError as e:
@@ -665,8 +1020,12 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                     await media.unload_model(provider, url, spicy_model_name)
 
         log.info("[MiniMaxEnhance] %d chars:\n%s", len(prompt), prompt)
-        director_data = build_director_payload(prompt, float(duration_seconds),
-                                               typed_context, preset)
+        if preset == PRESET_FULL:
+            director_data = build_full_director_payload(
+                prompt, model_director_data, float(duration_seconds), typed_context)
+        else:
+            director_data = build_director_payload(prompt, float(duration_seconds),
+                                                   typed_context, preset)
         return io.NodeOutput(prompt, batched, float(duration_seconds),
                              json.dumps(director_data, separators=(",", ":")))
 
@@ -703,7 +1062,7 @@ async def process_enhance_endpoint(request):
         output = await MiniMaxH3EnhancePrompt.execute(
             images=tensors,
             idea=data.get("idea", ""),
-            preset=data.get("preset", PRESET_GLOBAL),
+            preset=data.get("preset", PRESET_FULL),
             system_prompt=data.get("system_prompt", ""),
             duration_seconds=float(data.get("duration_seconds") or 5.0),
             provider=data.get("provider", "ollama"),

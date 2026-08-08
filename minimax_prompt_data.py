@@ -143,6 +143,23 @@ def _reference_manifest(context):
     } for index, image in enumerate(images[:9], start=1) if isinstance(image, dict)]
 
 
+def _anatomy_sentence(description, character):
+    description = str(description or "").strip()
+    if not description:
+        return ""
+    pronouns = str(character.get("pronouns", character.get("pronoun", "auto")) or "auto").lower()
+    if pronouns in ("she", "she/her", "her"):
+        possessive = "her"
+    elif pronouns in ("they", "they/them", "them", "their"):
+        possessive = "their"
+    else:
+        possessive = "his"
+    description = _first_lower(description)
+    if not re.match(r"^(?:a|an)\s+", description, re.IGNORECASE):
+        description = "a " + description
+    return _with_period("%s body has %s" % (possessive, description))
+
+
 def _subject_definitions(cast, references):
     characters = cast.get("characters") if isinstance(cast, dict) else []
     if not isinstance(characters, list):
@@ -169,7 +186,37 @@ def _subject_definitions(cast, references):
         next_subject += 1
         subject_of_slot[slot] = subject
         pictures = " and ".join(item["picture"] for item in refs)
-        description = str(character.get("description") or "").strip()
+        appearance = str(character.get("appearance") or "").strip()
+        original_wardrobe = str(character.get("wardrobe") or "").strip()
+        wardrobe_parts = []
+        anatomy_parts = []
+        for collage in cast.get("wardrobe_collages", []) or []:
+            if not isinstance(collage, dict):
+                continue
+            try:
+                collage_slot = int(collage.get("character_slot", collage.get("slot", 0)) or 0)
+            except (TypeError, ValueError):
+                continue
+            if collage_slot != slot:
+                continue
+            wardrobe = str(collage.get("description") or "").strip()
+            anatomy = str(collage.get("anatomy_description") or "").strip()
+            if wardrobe:
+                wardrobe_parts.append(wardrobe)
+            if anatomy:
+                anatomy_parts.append(anatomy)
+        # Wardrobe Director is authoritative when it has an assignment for this cast
+        # member. This prevents the original casting-test outfit from leaking into the
+        # final subject definition after a wardrobe change.
+        if wardrobe_parts or anatomy_parts:
+            description = " ".join(part for part in
+                                   (appearance, " ".join(wardrobe_parts),
+                                    _anatomy_sentence(" ".join(anatomy_parts), character))
+                                   if part).strip()
+        else:
+            description = " ".join(part for part in (appearance, original_wardrobe)
+                                   if part).strip()
+            description = description or str(character.get("description") or "").strip()
         line = "<Subject %d> is the character shown in %s" % (subject, pictures)
         if description:
             line += " " + _first_lower(description)
@@ -212,6 +259,7 @@ def build_director_payload(prompt, duration_seconds, context=None, preset=""):
         "motionSegments": [], "audioSegments": [],
         "characters": cast.get("characters", []) if isinstance(cast, dict) else [],
         "subject_definitions": subject_definitions,
+        "summary": "",
         "retention_analysis": retention,
         "overall_soundscape": audio,
         "non_diegetic_music": music,
