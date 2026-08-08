@@ -46,6 +46,11 @@ function mmxdOriginForInput(target, inputName) {
   return link ? app.graph?.getNodeById(link.origin_id) : null;
 }
 
+function mmxdReadJson(value, fallback = {}) {
+  if (value && typeof value === "object") return value;
+  try { return value ? JSON.parse(value) : fallback; } catch (_) { return fallback; }
+}
+
 // Verbose tracing, off by default so the browser console stays readable.
 // Run `window.MMXD_DEBUG = true` in the console (F12) and reload the workflow to get the
 // timeline JSON dumped on create / sync / save / configure — that is what to attach to a
@@ -13214,12 +13219,9 @@ app.registerExtension({
           referenceBudget.appendChild(referenceBudgetText);
           referenceBudget.appendChild(referenceBudgetHint);
 
-          const readJson = (value) => {
-            try { return value ? JSON.parse(value) : {}; } catch (_) { return {}; }
-          };
           const readTimelineForBudget = () => {
             if (node._timelineEditor?.timeline) return node._timelineEditor.timeline;
-            return readJson(getW("timeline_data")?.value || "");
+            return mmxdReadJson(getW("timeline_data")?.value || "");
           };
           const readConnectedCastForBudget = () => {
             try {
@@ -13227,13 +13229,13 @@ app.registerExtension({
               const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
               const source = link ? app.graph?.getNodeById(link.origin_id) : null;
               const widget = source?.widgets?.find(item => item.name === "cast_data");
-              const direct = readJson(source?.properties?.cast_wardrobe_output
+              const direct = mmxdReadJson(source?.properties?.cast_wardrobe_output
                 || widget?.value || source?.properties?.cast_data || "");
               if (Array.isArray(direct.characters)) return direct;
               const enhanceInput = node.inputs?.find(input => input.name === "enhance_json");
               const enhanceLink = enhanceInput?.link != null ? app.graph?.links?.[enhanceInput.link] : null;
               const enhanceSource = enhanceLink ? app.graph?.getNodeById(enhanceLink.origin_id) : null;
-              const enhance = readJson(enhanceSource?.properties?.processed_director_json
+              const enhance = mmxdReadJson(enhanceSource?.properties?.processed_director_json
                 || enhanceSource?.properties?.director_json || "");
               return enhance.cast && typeof enhance.cast === "object" ? enhance.cast : {};
             } catch (_) {
@@ -13247,7 +13249,7 @@ app.registerExtension({
               const source = link ? app.graph?.getNodeById(link.origin_id) : null;
               return {
                 source,
-                data: readJson(source?.properties?.processed_director_json
+                data: mmxdReadJson(source?.properties?.processed_director_json
                   || source?.properties?.director_json || ""),
               };
             } catch (_) {
@@ -13479,8 +13481,8 @@ app.registerExtension({
             const projectRoot = projectRootForNode();
             node.properties = { ...(node.properties || {}), project_name: project,
               project_path: projectPath, projects_path: projectRoot, project_root: projectRoot };
-            const timeline = node._timelineEditor?.timeline || readJson(getW("timeline_data")?.value || "{}");
-            const cast = readJson(connectedCastData());
+            const timeline = node._timelineEditor?.timeline || mmxdReadJson(getW("timeline_data")?.value || "{}");
+            const cast = mmxdReadJson(connectedCastData());
             const sources = connectedSourceNodes();
             const enhance = enhancedSource();
             const directorData = {
@@ -13808,7 +13810,7 @@ app.registerExtension({
         const refreshPrompt = async () => {
           try {
             const enhanceSource = mmxdOriginForInput(self, "enhance_json");
-            const enhanceData = readJson(enhanceSource?.properties?.processed_director_json
+            const enhanceData = mmxdReadJson(enhanceSource?.properties?.processed_director_json
               || enhanceSource?.properties?.director_json || "");
             const body = {
               timeline_data: w("timeline_data")?.value || "",
