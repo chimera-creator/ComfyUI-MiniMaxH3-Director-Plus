@@ -12,6 +12,7 @@ from PIL import Image, ImageOps
 
 from . import minimax_media as media
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
+from .minimax_projects import project_source_data
 
 
 MAX_LOCATION_ITEMS = 18
@@ -182,7 +183,7 @@ class MiniMaxH3LocationScout(io.ComfyNode):
             category="MiniMax H3",
             description=(
                 "Collect location and set reference images, descriptions, and picture tags. "
-                "Connect CAST + WARDROBE from Wardrobe Director and LOCATION CONTEXT plus "
+                "Connect CAST + WARDROBE from Wardrobe Director and CONTEXT plus "
                 "IMAGE REFS to Enhance Prompt."
             ),
             inputs=[
@@ -198,6 +199,10 @@ class MiniMaxH3LocationScout(io.ComfyNode):
                     "sets_data", multiline=True, default=json.dumps(_empty_sets()),
                     tooltip="JSON state of the Location Scout UI (auto-managed).",
                 ),
+                io.String.Input(
+                    "project", force_input=True, optional=True,
+                    tooltip="Optional PROJECT DATA output. Loads the saved sets source when present.",
+                ),
             ],
             outputs=[
                 io.String.Output(
@@ -205,8 +210,8 @@ class MiniMaxH3LocationScout(io.ComfyNode):
                     tooltip="Cast, wardrobe, and location references for the Director.",
                 ),
                 io.String.Output(
-                    display_name="LOCATION CONTEXT",
-                    tooltip="Context for the Enhance Prompt node.",
+                    display_name="CONTEXT",
+                    tooltip="Cast, wardrobe, location descriptions, and ordered image context for Enhance Prompt.",
                 ),
                 io.Image.Output(
                     display_name="IMAGE REFS",
@@ -216,7 +221,14 @@ class MiniMaxH3LocationScout(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, cast_wardrobe="", analyze_settings="", sets_data="") -> io.NodeOutput:
+    def execute(cls, cast_wardrobe="", analyze_settings="", sets_data="", project="") -> io.NodeOutput:
+        saved = project_source_data(project, "sets")
+        if isinstance(saved, dict):
+            saved_sets = saved.get("sets_data")
+            if not saved_sets and isinstance(saved.get("widgets"), dict):
+                saved_sets = saved["widgets"].get("sets_data")
+            if saved_sets:
+                sets_data = saved_sets
         items = _normalise_sets(sets_data)
         payload, entries = _reference_data(cast_wardrobe, items)
         return io.NodeOutput(

@@ -356,7 +356,37 @@ app.registerExtension({
       container.appendChild(projectRow);
       status = document.createElement("div"); status.className = "mmxd-location-status"; container.appendChild(status);
       itemsContainer = document.createElement("div"); itemsContainer.className = "mmxd-location-items"; container.appendChild(itemsContainer);
+      const refreshFromProject = async (projectName) => {
+        const project = String(projectName || "").trim();
+        if (!project) return;
+        try {
+          const document = await loadProject(project);
+          const saved = document?.sources?.sets;
+          const value = saved?.sets_data || saved?.widgets?.sets_data;
+          if (!value) return;
+          sets = parseSets(value);
+          if (setsWidget) {
+            setsWidget.value = JSON.stringify(sets);
+            if (setsWidget.element) setsWidget.element.value = setsWidget.value;
+          }
+          selectedProject = project;
+          node.properties = { ...(node.properties || {}), project_name: project, sets_data: JSON.stringify(sets) };
+          if (projectNameInput) projectNameInput.value = project;
+          renderItems();
+          save();
+          setStatus(`Loaded ${project}/sets.`);
+        } catch (error) {
+          setStatus(error.message || String(error), true);
+        }
+      };
+      node._mmxProjectRefresh = refreshFromProject;
       renderItems(); renderProjectOptions(); void refreshProjects();
+      setTimeout(() => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name);
+      }, 150);
     };
   },
 });

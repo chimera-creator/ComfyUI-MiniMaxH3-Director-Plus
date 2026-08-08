@@ -545,11 +545,41 @@ app.registerExtension({
         const required = node.computeSize?.()?.[1] || 0;
         if (required > (node.size?.[1] || 0)) node.setSize?.([node.size[0], required]);
       };
+      const refreshFromProject = async (projectName) => {
+        const project = String(projectName || "").trim();
+        if (!project) return;
+        try {
+          const response = await api.fetchApi(`/minimax_director/projects/load?name=${encodeURIComponent(project)}`);
+          const result = await response.json();
+          if (result.status !== "success") throw new Error(result.message || "Could not load project");
+          const saved = result.project?.sources?.casting;
+          const value = saved?.cast_data || saved?.widgets?.cast_data;
+          if (!value) return;
+          cast = parseCast(value);
+          if (castWidget) {
+            castWidget.value = JSON.stringify(cast);
+            if (castWidget.element) castWidget.element.value = castWidget.value;
+          }
+          node._castingData = JSON.stringify(cast);
+          refreshSettings();
+          renderSlots();
+          save();
+        } catch (error) {
+          console.warn("[MiniMaxCastingDirector] project refresh failed", error);
+        }
+      };
       node._castingRefresh = refresh;
+      node._mmxProjectRefresh = refreshFromProject;
       refresh();
       save();
       setTimeout(refresh, 0);
       setTimeout(refresh, 100);
+      setTimeout(() => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name);
+      }, 150);
     };
 
     const originalConfigure = nodeType.prototype.onConfigure;

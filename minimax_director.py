@@ -40,6 +40,7 @@ from comfy_api.latest import io
 from . import minimax_media as media
 from . import minimax_plan as plan
 from .minimax_core import core
+from .minimax_projects import project_source_data
 
 log = logging.getLogger(__name__)
 
@@ -274,6 +275,9 @@ class MiniMaxH3Director(io.ComfyNode):
                     "cast", force_input=True, optional=True,
                     tooltip="Optional output from MiniMax H3 Casting Director Plus. When connected, "
                             "its nine character slots replace the Director's built-in character slots."),
+                io.String.Input(
+                    "project", force_input=True, optional=True,
+                    tooltip="Optional PROJECT DATA output. Loads the saved Director timeline and prompt when present."),
                 io.Boolean.Input("use_custom_audio", default=False, optional=True,
                                  tooltip="ON: timeline audio clips are used as <Audio j> references (ref2va). "
                                          "The mixdown is always available on combined_audio regardless."),
@@ -379,9 +383,20 @@ class MiniMaxH3Director(io.ComfyNode):
                 use_custom_audio=False, inpaint_audio=True, use_custom_motion=True,
                 override_audio=False, ref_image_size="match",
                 shift_video=12.0, shift_audio=3.0, ref_images=None,
-                start=None, end=None, duration=None, cast=None) -> io.NodeOutput:
+                start=None, end=None, duration=None, cast=None, project=None) -> io.NodeOutput:
 
         mm = core()
+        saved = project_source_data(project, "director")
+        if isinstance(saved, dict):
+            saved_timeline = saved.get("timeline")
+            if isinstance(saved_timeline, dict):
+                timeline_data = json.dumps(saved_timeline, separators=(",", ":"))
+            if not str(global_prompt or "").strip() and saved.get("global_prompt"):
+                global_prompt = saved.get("global_prompt")
+            if cast is None and saved.get("cast"):
+                cast = saved.get("cast")
+                if isinstance(cast, dict):
+                    cast = json.dumps(cast, separators=(",", ":"))
         tdata = plan.merge_cast(plan.parse_timeline(timeline_data), cast)
         fps = float(frame_rate) if frame_rate else 24.0
 

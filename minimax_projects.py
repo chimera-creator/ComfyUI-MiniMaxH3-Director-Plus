@@ -94,6 +94,46 @@ def load_project(project_name: str) -> dict | None:
     return document
 
 
+def ensure_project(project_name: str) -> dict:
+    """Create a project index if needed and return its document."""
+    safe_name = normalise_project_name(project_name)
+    document = load_project(safe_name)
+    if document is not None:
+        return document
+    project_dir = _project_dir(safe_name)
+    os.makedirs(os.path.join(project_dir, "wardrobe"), exist_ok=True)
+    os.makedirs(os.path.join(project_dir, "sets"), exist_ok=True)
+    document = _empty_document(safe_name)
+    _write_json_atomic(_project_file(safe_name), document,
+                       os.path.dirname(_project_file(safe_name)))
+    return document
+
+
+def parse_project_document(value) -> dict | None:
+    """Parse a Project node payload without exposing filesystem paths."""
+    try:
+        value = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(value, dict) or not value.get("project_name"):
+        return None
+    return value
+
+
+def project_source_data(value, source: str):
+    """Extract a node source from a Project node payload."""
+    document = parse_project_document(value)
+    if not document:
+        return None
+    saved = (document.get("sources") or {}).get(str(source or "").strip().lower())
+    if not isinstance(saved, dict):
+        return None
+    data = saved.get("data")
+    if isinstance(data, dict):
+        return data
+    return saved
+
+
 def list_projects() -> list[dict]:
     if not os.path.isdir(PROJECTS_DIR):
         return []

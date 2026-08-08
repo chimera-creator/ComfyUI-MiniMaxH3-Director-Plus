@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from .minimax_casting import MAX_CHARACTERS, _normalise_cast
 from . import minimax_media as media
+from .minimax_projects import project_source_data
 
 MAX_WARDROBE_ITEMS = 18
 COLLAGE_TILE = 256
@@ -161,6 +162,34 @@ def _build_wardrobe_collages(active_characters, items):
     return collages
 
 
+def _wardrobe_context(payload):
+    lines = [
+        "Use the supplied cast and wardrobe references when writing the video prompt.",
+        "Cast and wardrobe reference images are labeled <image N> in the order listed below.",
+    ]
+    image_number = 0
+    for character_number, character in enumerate(payload.get("characters", []), start=1):
+        description = str(character.get("description") or "").strip()
+        images = character.get("images") if isinstance(character.get("images"), list) else []
+        for _image in images:
+            image_number += 1
+            suffix = (": " + description) if description else ": cast reference image"
+            lines.append("<image %d> cast character %d%s" %
+                         (image_number, character_number, suffix))
+    for collage in payload.get("wardrobe_collages", []):
+        if not isinstance(collage, dict):
+            continue
+        images = collage.get("images") if isinstance(collage.get("images"), list) else []
+        description = str(collage.get("description") or "").strip()
+        character_number = collage.get("character_slot", "?")
+        for _image in images[:1]:
+            image_number += 1
+            suffix = (": " + description) if description else ": wardrobe reference image"
+            lines.append("<image %d> wardrobe for cast character %s%s" %
+                         (image_number, character_number, suffix))
+    return "\n".join(lines)
+
+
 class MiniMaxH3WardrobeDirector(io.ComfyNode):
     """Assign wardrobe reference images and item descriptions to cast members."""
 
@@ -187,17 +216,35 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
                     "wardrobe_data", multiline=True, default=json.dumps(_empty_wardrobe()),
                     tooltip="JSON state of the Wardrobe Director UI (auto-managed; do not edit by hand).",
                 ),
+                io.String.Input(
+                    "project", force_input=True, optional=True,
+                    tooltip="Optional PROJECT DATA output. Loads the saved wardrobe source when present.",
+                ),
             ],
             outputs=[
                 io.String.Output(
                     display_name="CAST + WARDROBE",
                     tooltip="The connected cast plus assigned wardrobe items for the Director.",
                 ),
+                io.String.Output(
+                    display_name="CONTEXT",
+                    tooltip="Cast, wardrobe descriptions, and ordered image context for Enhance Prompt.",
+                ),
             ],
         )
 
     @classmethod
-    def execute(cls, cast_wardrobe="", analyze_settings="", wardrobe_data="") -> io.NodeOutput:
+    def execute(cls, cast_wardrobe="", analyze_settings="", wardrobe_data="", project="") -> io.NodeOutput:
+        saved = project_source_data(project, "wardrobe")
+        if isinstance(saved, dict):
+            saved_cast = saved.get("cast_wardrobe")
+            if not cast_wardrobe and saved_cast:
+                cast_wardrobe = saved_cast
+            saved_wardrobe = saved.get("wardrobe_data")
+            if not saved_wardrobe and isinstance(saved.get("widgets"), dict):
+                saved_wardrobe = saved["widgets"].get("wardrobe_data")
+            if saved_wardrobe:
+                wardrobe_data = saved_wardrobe
         cast = _normalise_cast(cast_wardrobe)
         active_characters = [
             {**character, "hired": True}
@@ -220,7 +267,8 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
             "wardrobe_items": items,
             "wardrobe_collages": wardrobe_collages,
         }
-        return io.NodeOutput(json.dumps(payload, separators=(",", ":")))
+        cast_wardrobe_json = json.dumps(payload, separators=(",", ":"))
+        return io.NodeOutput(cast_wardrobe_json, _wardrobe_context(payload))
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3WardrobeDirectorPlusCS": MiniMaxH3WardrobeDirector}

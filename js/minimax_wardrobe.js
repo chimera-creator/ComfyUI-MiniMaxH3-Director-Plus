@@ -718,12 +718,43 @@ app.registerExtension({
         renderItems();
         save();
       };
+      const refreshFromProject = async (projectName) => {
+        const project = String(projectName || "").trim();
+        if (!project) return;
+        try {
+          const document = await loadProject(project);
+          const saved = document?.sources?.wardrobe;
+          const value = saved?.wardrobe_data || saved?.widgets?.wardrobe_data;
+          if (!value) return;
+          wardrobe = parseWardrobe(value);
+          if (wardrobeWidget) {
+            wardrobeWidget.value = JSON.stringify(wardrobe);
+            if (wardrobeWidget.element) wardrobeWidget.element.value = wardrobeWidget.value;
+          }
+          node._wardrobeData = JSON.stringify(wardrobe);
+          selectedProject = project;
+          node.properties = { ...(node.properties || {}), project_name: project };
+          if (projectNameInput) projectNameInput.value = project;
+          renderItems();
+          save();
+          setProjectStatus(`Loaded ${project}.`);
+        } catch (error) {
+          setProjectStatus(error.message || String(error), true);
+        }
+      };
       node._wardrobeRefresh = refresh;
+      node._mmxProjectRefresh = refreshFromProject;
       refresh();
       renderProjectOptions();
       void refreshProjects();
       setTimeout(refresh, 0);
       setTimeout(refresh, 100);
+      setTimeout(() => {
+        const input = node.inputs?.find((item) => item.name === "project");
+        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+        const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+        if (source?.properties?.project_name) void refreshFromProject(source.properties.project_name);
+      }, 150);
     };
 
     const originalConfigure = nodeType.prototype.onConfigure;

@@ -13409,6 +13409,20 @@ app.registerExtension({
               setProjectMessage(error.message || String(error), true);
             }
           };
+          node._mmxProjectRefresh = async (projectName) => {
+            const project = String(projectName || "").trim();
+            if (!project) return;
+            try {
+              const document = await mmxdLoadProject(project);
+              applyProjectDirector(document.sources?.director);
+              projectNameInput.value = project;
+              projectSelect.value = project;
+              node.properties = { ...(node.properties || {}), project_name: project };
+              setProjectMessage(`Project: ${project}`);
+            } catch (error) {
+              setProjectMessage(error.message || String(error), true);
+            }
+          };
           projectNameInput.addEventListener("input", () => {
             node.properties = { ...(node.properties || {}), project_name: projectNameInput.value.trim() };
           });
@@ -13420,6 +13434,12 @@ app.registerExtension({
           panelRoot.appendChild(columns);
           refreshReferenceCounter();
           void refreshProjectList();
+          setTimeout(() => {
+            const input = node.inputs?.find((item) => item.name === "project");
+            const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+            const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+            if (source?.properties?.project_name) void node._mmxProjectRefresh(source.properties.project_name);
+          }, 150);
 
           // Re-read widget values into the panel. Saved values are restored AFTER onNodeCreated,
           // so we must refresh on load (onConfigure + a post-tick) or the panel shows defaults.

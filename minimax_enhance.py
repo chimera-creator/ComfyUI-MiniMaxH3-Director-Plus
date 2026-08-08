@@ -14,10 +14,16 @@ prompts forbid both, and `_clean()` removes them anyway when the model ignores t
 """
 import logging
 import re
+import base64
+import io as _io
 
+import numpy as np
 import torch
+from aiohttp import web
+from PIL import Image
 
 from comfy_api.latest import io
+from server import PromptServer
 
 from . import minimax_media as media
 from .minimax_core import extra
@@ -460,6 +466,10 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                default="passthrough", optional=True,
                                tooltip="'passthrough' hands your raw idea on and warns, so a "
                                        "stopped Ollama does not kill the whole run."),
+                io.String.Input("processed_prompt", multiline=True, default="", optional=True,
+                                tooltip="Prompt materialized by the Process button. When present, "
+                                        "the generation queue reuses it and does not call the LLM "
+                                        "again. Clear it and press Process after changing inputs."),
             ],
             outputs=[
                 io.String.Output(display_name="prompt",
@@ -479,7 +489,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                       duration_seconds=5.0, provider="ollama", base_url="", model="", api_key="",
                       use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
-                      on_error="passthrough", context="") -> io.NodeOutput:
+                      on_error="passthrough", context="", processed_prompt="") -> io.NodeOutput:
         tensors = _collect(images)
         if len(tensors) > MAX_IMAGES:
             log.warning("[MiniMaxEnhance] %d images connected, MiniMax H3 takes at most %d — "
@@ -497,6 +507,14 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                 log.warning("[MiniMaxEnhance] reference images have different sizes %s — "
                             "scaling them to the first one.", sorted(sizes))
             batched = extra("nodes_post_processing", "batch_images").batch_images(flat)
+
+        # The authoring UI can materialize this node before a generation is queued.
+        # Keep returning the image batch so the Director still receives the exact same
+        # references, but do not repeat any of the VLM, spicy-pass, or sound-line calls.
+        cached_prompt = str(processed_prompt or "").strip()
+        if cached_prompt:
+            log.info("[MiniMaxEnhance] using processed prompt; skipping LLM calls")
+            return io.NodeOutput(cached_prompt, batched, float(duration_seconds))
 
         provider = (provider or "ollama").lower()
         defaults = media._PROVIDER_DEFAULTS.get(provider, media._PROVIDER_DEFAULTS["ollama"])
@@ -610,3 +628,55 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3EnhancePromptPlusCS": MiniMaxH3EnhancePrompt}
 NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3EnhancePromptPlusCS": "MiniMax H3 Enhance Prompt Plus"}
+
+
+def _tensor_from_data_url(value):
+    """Decode a browser-supplied reference image for the authoring Process action."""
+    raw = str(value or "")
+    if "," in raw and raw.lower().startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    image = Image.open(_io.BytesIO(base64.b64decode(raw))).convert("RGB")
+    array = np.asarray(image, dtype=np.float32) / 255.0
+    return torch.from_numpy(array).unsqueeze(0)
+
+
+@PromptServer.instance.routes.post("/minimax_director/enhance/process")
+async def process_enhance_endpoint(request):
+    """Run Enhance Prompt from the node UI and return a prompt to cache in the node.
+
+    This is deliberately separate from the Comfy execution queue: Processing is an
+    authoring action, while the Director is the only node that should perform the
+    actual generation job. The cached prompt is then consumed by ``execute`` above.
+    """
+    try:
+        data = await request.json()
+        image_values = data.get("images") or []
+        tensors = {}
+        for index, value in enumerate(image_values[:MAX_IMAGES]):
+            if value:
+                tensors["image%d" % index] = _tensor_from_data_url(value)
+        output = await MiniMaxH3EnhancePrompt.execute(
+            images=tensors,
+            idea=data.get("idea", ""),
+            preset=data.get("preset", PRESET_GLOBAL),
+            system_prompt=data.get("system_prompt", ""),
+            duration_seconds=float(data.get("duration_seconds") or 5.0),
+            provider=data.get("provider", "ollama"),
+            base_url=data.get("base_url", ""),
+            model=data.get("model", ""),
+            api_key=data.get("api_key", ""),
+            use_spicy_model=bool(data.get("use_spicy_model", False)),
+            spicy_model=data.get("spicy_model", ""),
+            spicy_system_prompt=data.get("spicy_system_prompt", ""),
+            seed=int(data.get("seed") or 0),
+            max_image_size=int(data.get("max_image_size") or 768),
+            max_words=int(data.get("max_words", 500) if data.get("max_words") is not None else 500),
+            unload_after=bool(data.get("unload_after", True)),
+            on_error=data.get("on_error", "passthrough"),
+            context=data.get("context", ""),
+            processed_prompt="",
+        )
+        return web.json_response({"status": "success", "prompt": output[0]})
+    except Exception as error:
+        log.exception("[MiniMaxEnhance] Process action failed")
+        return web.json_response({"status": "error", "message": str(error)}, status=500)

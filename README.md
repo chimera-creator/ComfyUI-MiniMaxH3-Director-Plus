@@ -87,11 +87,12 @@ can read it before you spend a render on it.
 
 ## What you get
 
-Seven nodes, category **MiniMax H3**:
+Eight nodes, category **MiniMax H3**:
 
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
+| **MiniMax H3 Director Project Plus** | Select or create a named project and emit its shared project-data payload. Connect `PROJECT DATA` to the optional `project` inputs on Casting Director, Wardrobe Director, Location Scout, and Director. |
 | **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. Its `ANALYZE SETTINGS` output can connect to Wardrobe Director for item analysis. |
 | **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` and optionally `ANALYZE SETTINGS` from Casting Director, then connect its output to the Director's `cast` input. |
 | **MiniMax H3 Location Scout Plus** | Collect up to eighteen set/location images with descriptions, optionally analyze them with the connected VLM, and pass ordered cast, wardrobe, and location references to Enhance Prompt and the Director. Saves set data under `Projects/<project>/sets/`. |
@@ -245,9 +246,10 @@ readable; open them if you want to change sampler, scheduler or steps.
 For a structured reference workflow, connect the nodes in this order:
 
 ```
+Director Project PROJECT DATA -> Casting Director.project / Wardrobe Director.project / Location Scout.project / Director.project
 Casting Director CAST + WARDROBE -> Wardrobe Director -> Location Scout -> Director.cast
 Casting Director ANALYZE SETTINGS -> Wardrobe Director / Location Scout
-Location Scout LOCATION CONTEXT -> Enhance Prompt.context
+Location Scout CONTEXT -> Enhance Prompt.context
 Location Scout IMAGE REFS -> Enhance Prompt.images
 Enhance Prompt prompt -> Director.global_prompt
 Enhance Prompt ref_images -> Director.ref_images
@@ -256,6 +258,10 @@ Enhance Prompt ref_images -> Director.ref_images
 The Director can still be used by itself. External cast, wardrobe, location, and Enhance
 connections are optional; unconnected Director character slots, timeline prompts, and
 manual sound fields remain available.
+
+The Project node creates the `Projects/<project>/` folder on demand and emits the master
+project JSON. Connected authoring nodes use the matching saved source when one exists, so
+the same project selection can restore cast, wardrobe, sets, and Director timeline data.
 
 | Track | Drop this | Becomes |
 |---|---|---|
@@ -432,9 +438,9 @@ warnings rather than silently ignored.
 
 ## Projects and saved data
 
-The Director, Wardrobe Director, and Location Scout each have a project selector, project
-name field, refresh button, and save button. Projects are named folders inside the node
-directory:
+The **Director Project Plus** node provides the shared project selector and creator. The
+Director, Wardrobe Director, and Location Scout retain their local save controls for source
+snapshots. Projects are named folders inside the node directory:
 
 ```
 Projects/<project>/
@@ -578,6 +584,13 @@ the finished shot, thinning included.
 vision model and gets back prompt text shaped for H3. The same images come out of its
 `ref_images` output, so what the model described is exactly what H3 conditions on.
 
+Use **PROCESS PROMPT** after the cast, wardrobe, location, idea, and model settings are ready.
+This runs the VLM, spicy second pass, and sound-line completion immediately and stores the
+result on the node. The Director generation queue reuses that stored prompt, so those LLM
+steps are not repeated during generation. Press **CLEAR CACHE** and process again after
+changing an Enhance input. Casting Director, Wardrobe Director, and Location Scout are
+authoring nodes; their analysis controls are run before the generation queue.
+
 <img src="docs/images/enhance-prompt-node.png" alt="The Enhance Prompt node" width="380">
 
 Ready-made graph: `example_workflows/MiniMax H3 Director + Enhance Prompt.json`.
@@ -605,6 +618,7 @@ Sockets grow as you connect, up to nine, and close the gap again when you discon
 | `max_words` | Caps the description. MiniMax's guide puts it at 350–500 words. |
 | `unload_after` | Frees the vision model's VRAM when done. Leave it on unless you are iterating. |
 | `on_error` | `passthrough` hands your raw text on and warns, so a stopped Ollama does not kill a render. |
+| `processed_prompt` | The cached result written by **PROCESS PROMPT**. It is hidden in the UI and reused during generation until cleared or reprocessed. |
 
 **It has to be a vision model.** A text-only model ignores your images without saying so.
 `qwen2.5vl:7b` is a reasonable Ollama default; anything larger writes noticeably better

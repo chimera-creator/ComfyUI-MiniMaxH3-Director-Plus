@@ -2,6 +2,7 @@ from comfy_api.latest import ComfyExtension, io
 from typing_extensions import override
 
 from .minimax_director import MiniMaxH3Director
+from .minimax_project import MiniMaxH3DirectorProject
 from .minimax_casting import MiniMaxH3CastingDirector
 from .minimax_wardrobe import MiniMaxH3WardrobeDirector
 from .minimax_location import MiniMaxH3LocationScout
@@ -17,7 +18,8 @@ from .minimax_retake import MiniMaxH3RetakeStitch
 class MiniMaxH3DirectorExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
-        return [MiniMaxH3Director, MiniMaxH3CastingDirector, MiniMaxH3WardrobeDirector,
+        return [MiniMaxH3Director, MiniMaxH3DirectorProject, MiniMaxH3CastingDirector,
+                MiniMaxH3WardrobeDirector,
                 MiniMaxH3LocationScout,
                 MiniMaxH3PreviewOverride,
                 MiniMaxH3RetakeStitch, MiniMaxH3EnhancePrompt]
@@ -29,6 +31,7 @@ async def comfy_entrypoint() -> MiniMaxH3DirectorExtension:
 
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3DirectorPlusCS": MiniMaxH3Director,
+    "MiniMaxH3DirectorProjectPlusCS": MiniMaxH3DirectorProject,
     "MiniMaxH3CastingDirectorPlusCS": MiniMaxH3CastingDirector,
     "MiniMaxH3WardrobeDirectorPlusCS": MiniMaxH3WardrobeDirector,
     "MiniMaxH3LocationScoutPlusCS": MiniMaxH3LocationScout,
@@ -39,6 +42,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3DirectorPlusCS": "MiniMax H3 Director Plus",
+    "MiniMaxH3DirectorProjectPlusCS": "MiniMax H3 Director Project Plus",
     "MiniMaxH3CastingDirectorPlusCS": "MiniMax H3 Casting Director Plus",
     "MiniMaxH3WardrobeDirectorPlusCS": "MiniMax H3 Wardrobe Director Plus",
     "MiniMaxH3LocationScoutPlusCS": "MiniMax H3 Location Scout Plus",

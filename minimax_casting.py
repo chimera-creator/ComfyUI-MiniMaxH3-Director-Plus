@@ -4,6 +4,8 @@ import json
 
 from comfy_api.latest import io
 
+from .minimax_projects import project_source_data
+
 MAX_CHARACTERS = 9
 PRONOUN_OPTIONS = ("auto", "he", "she", "they")
 
@@ -71,6 +73,26 @@ def _active_cast_payload(value):
     }
 
 
+def _cast_context(payload):
+    lines = [
+        "Use the supplied cast references and descriptions when writing the video prompt.",
+        "Cast reference images are labeled <image N> in the order listed below.",
+    ]
+    image_number = 0
+    for character_number, character in enumerate(payload.get("characters", []), start=1):
+        description = str(character.get("description") or "").strip()
+        images = character.get("images") if isinstance(character.get("images"), list) else []
+        if images:
+            for _image in images:
+                image_number += 1
+                suffix = (": " + description) if description else ": cast reference image"
+                lines.append("<image %d> cast character %d%s" %
+                             (image_number, character_number, suffix))
+        elif description:
+            lines.append("Cast character %d: %s" % (character_number, description))
+    return "\n".join(lines)
+
+
 def _normalise_cast(cast_data):
     try:
         value = json.loads(cast_data) if isinstance(cast_data, str) else cast_data
@@ -123,6 +145,10 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
                     "cast_data", multiline=True, default=json.dumps(_empty_cast()),
                     tooltip="JSON state of the Casting Director UI (auto-managed; do not edit by hand).",
                 ),
+                io.String.Input(
+                    "project", force_input=True, optional=True,
+                    tooltip="Optional PROJECT DATA output. Loads the saved casting source when present.",
+                ),
             ],
             outputs=[
                 io.String.Output(
@@ -137,11 +163,22 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
                     display_name="ANALYZE SETTINGS",
                     tooltip="Provider, model, URL, and optional API key for Casting/Wardrobe analysis.",
                 ),
+                io.String.Output(
+                    display_name="CONTEXT",
+                    tooltip="Cast descriptions and ordered cast image context for Enhance Prompt.",
+                ),
             ],
         )
 
     @classmethod
-    def execute(cls, cast_data="") -> io.NodeOutput:
+    def execute(cls, cast_data="", project="") -> io.NodeOutput:
+        saved = project_source_data(project, "casting")
+        if isinstance(saved, dict):
+            saved_cast = saved.get("cast_data")
+            if not saved_cast and isinstance(saved.get("widgets"), dict):
+                saved_cast = saved["widgets"].get("cast_data")
+            if saved_cast:
+                cast_data = saved_cast
         value = _normalise_cast(cast_data)
         # Analyzer settings stay local to this node; the graph only needs the reusable
         # character payload and should not carry an API key into the Director socket.
@@ -156,7 +193,8 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
             "model": value.get("analyzeModel", ""),
             "api_key": value.get("analyzeApiKey", ""),
         }, separators=(",", ":"))
-        return io.NodeOutput(cast_json, wardrobe_json, analyze_settings)
+        return io.NodeOutput(cast_json, wardrobe_json, analyze_settings,
+                             _cast_context(payload))
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3CastingDirectorPlusCS": MiniMaxH3CastingDirector}

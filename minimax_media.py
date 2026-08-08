@@ -832,6 +832,20 @@ async def load_project_endpoint(request):
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 
+@PromptServer.instance.routes.post("/minimax_director/projects/create")
+async def create_project_endpoint(request):
+    try:
+        from .minimax_projects import ensure_project
+        data = await request.json()
+        document = ensure_project(data.get("project"))
+        return web.json_response({"status": "success", "project": document})
+    except ValueError as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=400)
+    except Exception as e:
+        log.error("[MiniMaxDirector] Failed to create project: %s", e)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.post("/minimax_director/projects/save")
 async def save_project_endpoint(request):
     try:
