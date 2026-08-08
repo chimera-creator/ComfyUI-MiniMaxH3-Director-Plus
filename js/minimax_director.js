@@ -12791,18 +12791,27 @@ app.registerExtension({
                 ? options.maxValue(mode)
                 : options.maxValue[mode];
             };
+            const minForMode = (mode) => {
+              if (!options.minValue) return mode === "frames" ? minFrm : minSec;
+              const value = typeof options.minValue === "function"
+                ? options.minValue(mode)
+                : options.minValue[mode];
+              return Number.isFinite(Number(value)) ? Number(value) : (mode === "frames" ? minFrm : minSec);
+            };
             const refresh = () => {
               const framesMode = timeMode() === "frames";
               const w = getW(framesMode ? frmName : secName);
               const mode = framesMode ? "frames" : "seconds";
+              const min = minForMode(mode);
               const max = maxForMode(mode);
-              input.min = String(framesMode ? minFrm : minSec);
+              input.min = String(min);
               if (max !== null && max !== undefined) input.max = String(max);
               else input.removeAttribute("max");
               input.step = framesMode ? "1" : "0.01";
               unit.textContent = framesMode ? "fr" : "s";
               let value = w ? Number(w.value) : (framesMode ? minFrm : minSec);
               if (!Number.isFinite(value)) value = framesMode ? minFrm : minSec;
+              value = Math.max(value, min);
               if (max !== null && max !== undefined) value = Math.min(value, max);
               input.value = value;
               if (valueReadout) {
@@ -12812,10 +12821,13 @@ app.registerExtension({
             input.addEventListener("change", () => {
               let v = parseFloat(input.value);
               if (isNaN(v)) v = 0;
-              const max = maxForMode(timeMode() === "frames" ? "frames" : "seconds");
+              const mode = timeMode() === "frames" ? "frames" : "seconds";
+              const min = minForMode(mode);
+              const max = maxForMode(mode);
+              v = Math.max(min, v);
               if (max !== null && max !== undefined) v = Math.min(max, v);
-              if (timeMode() === "frames") { v = Math.max(minFrm, Math.round(v)); setW(frmName, v); }
-              else { v = Math.max(minSec, v); setW(secName, parseFloat(v.toFixed(3))); }
+              if (mode === "frames") { v = Math.max(min, Math.round(v)); setW(frmName, v); }
+              else { v = Math.max(min, v); setW(secName, parseFloat(v.toFixed(3))); }
               timeRefreshers.forEach(fn => fn());
             });
             if (isSlider) input.addEventListener("input", () => {
@@ -12831,12 +12843,19 @@ app.registerExtension({
             const fps = Math.max(1, parseFloat(getW("frame_rate")?.value) || 24);
             return Math.floor(H3_SAFE_MAX_DURATION_SECONDS * fps + 1e-9);
           };
-          const maxEndForMode = (mode) => {
-            const startName = mode === "frames" ? "start_frame" : "start_second";
-            return (parseFloat(getW(startName)?.value) || 0) + maxDurationForMode(mode);
-          };
-          mkTimeRow(left, "Duration", "duration_seconds", "duration_frames", 0.1, 1,
-                    { slider: true, maxValue: maxDurationForMode });
+            const maxEndForMode = (mode) => {
+              const startName = mode === "frames" ? "start_frame" : "start_second";
+              return (parseFloat(getW(startName)?.value) || 0) + maxDurationForMode(mode);
+            };
+            const minEndForMode = (mode) => {
+              const startName = mode === "frames" ? "start_frame" : "start_second";
+              const start = parseFloat(getW(startName)?.value) || 0;
+              if (mode === "frames") return Math.max(1, Math.round(start) + 1);
+              const fps = Math.max(1, parseFloat(getW("frame_rate")?.value) || 24);
+              return parseFloat(((Math.round(start * fps) + 1) / fps).toFixed(3));
+            };
+            mkTimeRow(left, "Duration", "duration_seconds", "duration_frames", 0.1, 1,
+                      { slider: true, maxValue: maxDurationForMode });
 
           // ---------- RIGHT: Timing / Reference ----------
           const right = mkCol("Timing / Reference");
@@ -12852,9 +12871,9 @@ app.registerExtension({
             if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
           });
           unitRow.appendChild(unitSel); right.appendChild(unitRow);
-          mkTimeRow(right, "Start", "start_second", "start_frame", 0, 0);
-          mkTimeRow(right, "End", "end_second", "end_frame", 0, 1,
-                    { maxValue: maxEndForMode });
+            mkTimeRow(right, "Start", "start_second", "start_frame", 0, 0);
+            mkTimeRow(right, "End", "end_second", "end_frame", 0, 1,
+                      { slider: true, minValue: minEndForMode, maxValue: maxEndForMode });
           const rmRow = mkRow("Resize");
           const rmW = getW("resize_method");
           let rmVals = (rmW && rmW.options && rmW.options.values) ? rmW.options.values : null;
