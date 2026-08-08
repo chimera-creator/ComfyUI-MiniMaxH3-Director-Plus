@@ -692,9 +692,11 @@ const STYLES = `
   /* The wrapper positions its children absolutely, so this row sits at the bottom and
      the prompt area above it is shortened by exactly the same amount. Nothing here
      changes the node's height: the container keeps whatever the user resized it to. */
-  .mmxd-sound-row { position: absolute; bottom: 0; left: 0; width: 100%; height: 54px; display: flex; gap: 6px; padding: 0 8px 6px 8px; box-sizing: border-box; }
-  .mmxd-guide-row { bottom: 54px; }
-  .mmxd-prompt-area.mmxd-has-sound { height: calc(100% - 20px - 54px - 54px); }
+  .mmxd-sound-row { position: absolute; bottom: 0; left: 0; width: 100%; height: 54px; display: flex; gap: 6px; padding: 0 8px 6px 8px; box-sizing: border-box; z-index: 6; }
+  /* The original and Plus nodes share these class names. Keep the Plus guide row
+     above the original node's one-row rule when both packages are loaded. */
+  .mmxd-prompt-wrapper .mmxd-guide-row { bottom: 54px; z-index: 6; }
+  .mmxd-prompt-wrapper .mmxd-prompt-area.mmxd-has-sound { height: calc(100% - 20px - 54px - 54px); }
   .mmxd-sound-field { position: relative; flex: 1 1 0; min-width: 0; background: #1c1c1c; border: 1px solid #111; border-radius: 4px; box-sizing: border-box; }
   .mmxd-sound-field.focus-active { border-color: #888; }
   .mmxd-sound-label { position: absolute; top: 3px; left: 6px; font-size: 8px; font-weight: bold; color: #5a5a5a; text-transform: uppercase; letter-spacing: 0.5px; pointer-events: none; user-select: none; z-index: 5; }
@@ -702,10 +704,10 @@ const STYLES = `
   .mmxd-sound-area::placeholder { color: #4a4a4a; }
 `;
 
-let styleEl = document.getElementById("minimax-h3-director-styles");
+let styleEl = document.getElementById("minimax-h3-director-plus-styles");
 if (!styleEl) {
   styleEl = document.createElement("style");
-  styleEl.id = "minimax-h3-director-styles";
+  styleEl.id = "minimax-h3-director-plus-styles";
   document.head.appendChild(styleEl);
 }
 styleEl.textContent = STYLES;
