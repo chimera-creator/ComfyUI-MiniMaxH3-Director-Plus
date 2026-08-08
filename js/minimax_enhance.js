@@ -1,6 +1,6 @@
 // Authoring controls for MiniMax H3 Enhance Prompt Plus.
 // Processing is intentionally an explicit action: the generated prompt is stored on the
-// node and the Python execute path reuses it during the Director generation queue.
+// node, then the Director imports and owns that frozen result before generation.
 
 const { app } = window.comfyAPI.app;
 const { api } = window.comfyAPI.api;
@@ -511,7 +511,7 @@ app.registerExtension({
           const parsed = parseJson(result.director_json, {});
           const shotCount = Array.isArray(parsed?.shots) ? parsed.shots.length : 0;
           setStatus(`Processed ${imageValues.length} reference image${imageValues.length === 1 ? "" : "s"}`
-            + ` and ${shotCount} timeline shot${shotCount === 1 ? "" : "s"}. Generation will reuse this prompt.`);
+            + ` and ${shotCount} timeline shot${shotCount === 1 ? "" : "s"}. Director owns this processed sequence.`);
         } catch (error) {
           setStatus(error.message || String(error), true);
         } finally {
@@ -566,7 +566,7 @@ app.registerExtension({
         processedDirectorWidget.value = node.properties.processed_director_json;
       }
       refreshOutputText();
-      if (processedWidget?.value) setStatus("Processed prompt cached — generation will reuse it.");
+      if (processedWidget?.value) setStatus("Processed prompt ready — Director owns the generation sequence.");
     };
     const originalConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {

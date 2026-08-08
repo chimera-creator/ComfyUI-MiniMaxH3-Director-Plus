@@ -252,9 +252,8 @@ Casting Director ANALYZE SETTINGS -> Wardrobe Director / Location Scout
 Location Scout CONTEXT DATA -> Enhance Prompt.context_data
 Location Scout CONTEXT -> Enhance Prompt.context (legacy text fallback)
 Location Scout IMAGE REFS -> Enhance Prompt.images (legacy image fallback)
-Enhance Prompt prompt -> Director.global_prompt
-Enhance Prompt ref_images -> Director.ref_images
-Enhance Prompt director_json -> Director.enhance_json
+Enhance Prompt director_json -> Director.enhance_json (authoring handoff)
+Enhance Prompt ref_images / duration -> Director (optional legacy authoring wires)
 ```
 
 `CONTEXT DATA` is the preferred Enhance Prompt connection. Casting Director, Wardrobe
@@ -265,11 +264,14 @@ its prepacked image tensor, so project-backed references can reach the VLM witho
 separate image sockets. The old `CONTEXT` and `IMAGE REFS` sockets remain available for
 existing workflows.
 
-Connect both `director_json` and `ref_images` from Enhance Prompt to the Director for the
-complete hand-off. The JSON is the reference manifest: every image has its exact
+Connect `director_json` from Enhance Prompt to the Director for the complete authoring
+hand-off. The JSON is the reference manifest: every image has its exact
 `<Picture N>` ordinal, source, character/location assignment, and description. The image
-batch supplies the pixels in that same order. If `ref_images` is not connected, the
-Director also attempts to resolve named images from the JSON project resources.
+descriptors are resolved from Comfy input files or the project resources. The legacy
+`ref_images` and duration wires may remain visible, but queue serialization replaces all
+Enhance-to-Director links with the frozen Director JSON and Director widget values. Enhance,
+Casting Director, Wardrobe Director, and Location Scout therefore do not execute when Run
+is pressed; only the Director's finalized sequence moves into generation.
 
 The Director can still be used by itself. External cast, wardrobe, location, and Enhance
 connections are optional; unconnected Director character slots, timeline prompts, and
@@ -649,8 +651,9 @@ cannot be reopened, so the JSON-only handoff still reaches the Director.
 
 Use **PROCESS PROMPT** after the cast, wardrobe, location, idea, and model settings are ready.
 This runs the VLM, spicy second pass, and sound-line completion immediately and stores the
-result on the node. The Director generation queue reuses that stored prompt, so those LLM
-steps are not repeated during generation. Press **CLEAR CACHE** and process again after
+result on the node. The Director imports and owns that frozen sequence. When Run is pressed,
+the queued graph removes Enhance as a Director dependency, so the Enhance node does not run
+at all. Press **CLEAR CACHE** and process again after
 changing an Enhance input. **VIEW OUTPUT** shows the complete cached prompt and pretty-printed
 Director JSON, including every generated timeline shot; **COPY ALL** copies both for
 inspection or troubleshooting. Casting Director, Wardrobe Director, and Location Scout are
@@ -687,11 +690,12 @@ as you connect, up to nine, and close the gap again when you disconnect.
 | `max_words` | Caps the description. MiniMax's guide puts it at 350–500 words. |
 | `unload_after` | Frees the vision model's VRAM when done. Leave it on unless you are iterating. |
 | `on_error` | `passthrough` hands your raw text on and warns, so a stopped Ollama does not kill a render. |
-| `processed_prompt` | The cached result written by **PROCESS PROMPT**. It is hidden in the UI and reused during generation until cleared or reprocessed. |
+| `processed_prompt` | The authoring result written by **PROCESS PROMPT**. It is hidden in the UI and frozen into the Director until cleared or reprocessed. |
 
 **It has to be a vision model.** A text-only model ignores your images without saying so.
 `qwen2.5vl:7b` is a reasonable Ollama default; anything larger writes noticeably better
-prompts. Expect 15–45 s per run, during which the queue is blocked.
+prompts. Expect 15–45 seconds for the explicit **PROCESS PROMPT** authoring action;
+generation does not repeat or schedule that work.
 
 **What it deliberately does not write:** section labels, `<Picture N>` numbering, or shot
 markers in `global` mode. The Director compiles the structured MiniMax prompt and assigns

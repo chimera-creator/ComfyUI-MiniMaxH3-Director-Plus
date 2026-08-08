@@ -1,9 +1,10 @@
 """MiniMax H3 Enhance Prompt — a local vision model writes the prompt from your references.
 
-The node hands up to nine reference images plus a one-line wish to Ollama / LM Studio /
-any OpenAI-compatible endpoint, and returns text meant for the Director's `global_prompt`
-input. The same images come back out of `ref_images`, and `director_json` carries the
-parsed duration, shots, guide fields, and ordered reference manifest for the Director.
+The Process Prompt authoring action hands up to nine reference images plus a one-line wish
+to Ollama / LM Studio / any OpenAI-compatible endpoint. `director_json` carries the parsed
+duration, shots, guide fields, and ordered reference manifest into the Director. At queue
+time the frontend freezes that result into the Director, so this node and its upstream
+authoring chain are not part of generation execution.
 
 The default Full H3 preset gives the model the Director's exact ordered reference manifest
 and asks for a terminal JSON object. The response is normalized against the real context,
@@ -752,9 +753,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
             description=(
                 "Turns a one-line idea plus typed cast/wardrobe/location context into a MiniMax-H3 prompt, "
                 "using a local vision model (Ollama / LM Studio / OpenAI-compatible). "
-                "Connect CONTEXT DATA when available; legacy direct image sockets remain "
-                "available. Wire `prompt` into the Director's global_prompt and `ref_images` "
-                "into its ref_images, so the model describes exactly the images H3 conditions on."
+                "Connect CONTEXT DATA when available and press Process Prompt before generation. "
+                "Connections to the Director are authoring handoffs; the generation queue freezes "
+                "the result into the Director and does not execute this node."
             ),
             inputs=[
                 io.Autogrow.Input(
@@ -842,11 +843,12 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                                        "stopped Ollama does not kill the whole run."),
                 io.String.Input("processed_prompt", multiline=True, default="", optional=True,
                                 tooltip="Prompt materialized by the Process button. When present, "
-                                        "the generation queue reuses it and does not call the LLM "
-                                        "again. Clear it and press Process after changing inputs."),
+                                        "the Director can freeze it during authoring. This node is "
+                                        "not executed by the generation queue. Clear and reprocess "
+                                        "after changing inputs."),
                 io.String.Input("processed_director_json", multiline=True, default="", optional=True,
                                 tooltip="Director JSON materialized by the Process button. Hidden in the UI "
-                                        "and reused with the cached prompt."),
+                                        "and frozen into the Director before generation."),
             ],
             outputs=[
                 io.String.Output(display_name="prompt",
@@ -870,7 +872,14 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                       use_spicy_model=False, spicy_model="", spicy_system_prompt="",
                       seed=0, max_image_size=768, max_words=500, unload_after=True,
                       on_error="passthrough", context="", processed_prompt="",
-                      context_data=None, processed_director_json="") -> io.NodeOutput:
+                      context_data=None, processed_director_json="",
+                      _authoring_process=False) -> io.NodeOutput:
+        cached_prompt = str(processed_prompt or "").strip()
+        if not _authoring_process and not cached_prompt:
+            raise ValueError(
+                "MiniMax H3 Enhance Prompt Plus is an authoring node. "
+                "Press PROCESS PROMPT before running the ComfyUI generation queue."
+            )
         typed_context = normalise_context(context_data)
         provided_tensors = _collect(images)
         context_has_images = isinstance(context_data, dict) and (
@@ -911,10 +920,9 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
                             "scaling them to the first one.", sorted(sizes))
             batched = extra("nodes_post_processing", "batch_images").batch_images(flat)
 
-        # The authoring UI can materialize this node before a generation is queued.
-        # Keep returning the image batch so the Director still receives the exact same
-        # references, but do not repeat any of the VLM, spicy-pass, or sound-line calls.
-        cached_prompt = str(processed_prompt or "").strip()
+        # Legacy graphs may still schedule a cached Enhance node. That compatibility path
+        # returns the frozen result without an LLM call; current graphs detach Enhance from
+        # the queued Director dependency chain in the frontend.
         if cached_prompt:
             log.info("[MiniMaxEnhance] using processed prompt; skipping LLM calls")
             cached_json = parse_json(processed_director_json)
@@ -1165,7 +1173,7 @@ async def process_enhance_endpoint(request):
 
     This is deliberately separate from the Comfy execution queue: Processing is an
     authoring action, while the Director is the only node that should perform the
-    actual generation job. The cached prompt is then consumed by ``execute`` above.
+    actual generation job. Queue serialization freezes this result into the Director.
     """
     try:
         data = await request.json()
@@ -1196,6 +1204,7 @@ async def process_enhance_endpoint(request):
             processed_prompt="",
             context_data=data.get("context_data"),
             processed_director_json="",
+            _authoring_process=True,
         )
         director_json = _materialize_process_references(
             output[3], image_values, data.get("context_data"))

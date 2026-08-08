@@ -430,8 +430,10 @@ class MiniMaxH3Director(io.ComfyNode):
                 if isinstance(cast, dict):
                     cast = json.dumps(cast, separators=(",", ":"))
         enhance_data = parse_json(enhance_json) or {}
-        enhance_duration = enhance_data.get("duration_seconds", enhance_data.get("duration"))
-        if enhance_data:
+        authoring_frozen = bool(enhance_data.get("_director_authoring_frozen"))
+        enhance_duration = (None if authoring_frozen else
+                            enhance_data.get("duration_seconds", enhance_data.get("duration")))
+        if enhance_data and not authoring_frozen:
             timeline = plan.parse_timeline(timeline_data)
             supplied_timeline = enhance_data.get("timeline")
             if isinstance(supplied_timeline, dict):

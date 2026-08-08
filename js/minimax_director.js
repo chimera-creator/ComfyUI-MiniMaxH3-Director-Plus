@@ -51,6 +51,64 @@ function mmxdReadJson(value, fallback = {}) {
   try { return value ? JSON.parse(value) : fallback; } catch (_) { return fallback; }
 }
 
+function mmxdNodeType(node) {
+  return String(node?.comfyClass || node?.type || "").toLowerCase();
+}
+
+function mmxdEnhanceSourceForDirector(director) {
+  for (const inputName of ["enhance_json", "ref_images", "duration", "global_prompt"]) {
+    const source = mmxdOriginForInput(director, inputName);
+    if (mmxdNodeType(source).includes("enhancepromptplus")) return source;
+  }
+  return null;
+}
+
+function mmxdFreezeDirectorAuthoringInputs(result) {
+  const output = result?.output;
+  if (!output || typeof output !== "object") return result;
+  for (const director of app.graph?._nodes || []) {
+    if (mmxdNodeType(director) !== "minimaxh3directorpluscs") continue;
+    const promptNode = output[String(director.id)] || output[director.id];
+    if (!promptNode?.inputs) continue;
+    const enhanceSource = mmxdEnhanceSourceForDirector(director);
+    const storedRaw = director.properties?.authoring_director_json || "";
+    const liveRaw = enhanceSource
+      ? (enhanceSource.properties?.processed_director_json
+        || enhanceSource.properties?.director_json || "")
+      : storedRaw;
+    if (!enhanceSource && !liveRaw) continue;
+    if (enhanceSource && !liveRaw) {
+      throw new Error(
+        "MiniMax H3 Enhance Prompt Plus is an authoring node. Press PROCESS PROMPT "
+        + "before running the ComfyUI generation queue."
+      );
+    }
+    const data = mmxdReadJson(liveRaw, null);
+    if (!data || typeof data !== "object") {
+      throw new Error("The processed Enhance Director JSON is invalid. Clear it and press PROCESS PROMPT again.");
+    }
+    const stored = typeof liveRaw === "string" ? liveRaw : JSON.stringify(liveRaw);
+    const frozen = JSON.stringify({ ...data, _director_authoring_frozen: true });
+    director.properties = { ...(director.properties || {}), authoring_director_json: stored };
+
+    // Preserve the canvas wires as an authoring relationship, but replace those links
+    // in the queued API graph with Director-owned values. This makes Enhance and its
+    // Casting/Wardrobe/Location ancestry unreachable from the generation output.
+    promptNode.inputs.enhance_json = frozen;
+    for (const inputName of ["ref_images", "duration"]) {
+      if (enhanceSource && mmxdOriginForInput(director, inputName) === enhanceSource) {
+        delete promptNode.inputs[inputName];
+      }
+    }
+    if (enhanceSource && mmxdOriginForInput(director, "global_prompt") === enhanceSource) {
+      promptNode.inputs.global_prompt = String(
+        data.global_prompt || director.properties?.global_prompt || ""
+      );
+    }
+  }
+  return result;
+}
+
 // Verbose tracing, off by default so the browser console stays readable.
 // Run `window.MMXD_DEBUG = true` in the console (F12) and reload the workflow to get the
 // timeline JSON dumped on create / sync / save / configure — that is what to attach to a
@@ -12611,6 +12669,21 @@ const APPENDED_WIDGET_DEFAULTS = [
 app.registerExtension({
   name: "MiniMaxH3DirectorPlusCS",
   async setup() {
+    if (!app._mmxDirectorPlusAuthoringFreezeHookInstalled) {
+      app._mmxDirectorPlusAuthoringFreezeHookInstalled = true;
+      const originalGraphToPrompt = app.graphToPrompt;
+      app.graphToPrompt = async function (...args) {
+        for (const node of app.graph?._nodes || []) {
+          if (mmxdNodeType(node) === "minimaxh3directorpluscs") {
+            // Import a newly processed handoff before serialization, but do not force
+            // the same Enhance result back over edits subsequently made in Director.
+            node._mmxApplyEnhanceJson?.(false);
+          }
+        }
+        const result = await originalGraphToPrompt.apply(this, args);
+        return mmxdFreezeDirectorAuthoringInputs(result);
+      };
+    }
     // On Run, ask the chosen analyze backend to release its model from VRAM so it doesn't
     // compete with MiniMax H3 generation. Only fires when an MiniMax H3 Director is in the graph and its
     // provider isn't "off". Fully tolerant: failures are swallowed so they never block a run.
@@ -12791,6 +12864,11 @@ app.registerExtension({
           const raw = source?.properties?.processed_director_json || source?.properties?.director_json || "";
           if (!raw) {
             self._mmxEnhanceJsonApplied = "";
+            if (source && self.properties?.authoring_director_json) {
+              const nextProperties = { ...(self.properties || {}) };
+              delete nextProperties.authoring_director_json;
+              self.properties = nextProperties;
+            }
             return;
           }
           const fingerprint = String(raw);
@@ -12850,6 +12928,8 @@ app.registerExtension({
           editor.updateWardrobeSlotsUI?.();
           editor.syncWidgetsAndUI();
           editor.commitChanges(true);
+          self.properties = { ...(self.properties || {}),
+            authoring_director_json: fingerprint };
           self._mmxEnhanceJsonApplied = fingerprint;
           self._mmxSettingsRefresh?.();
           self._mmxRefreshReferenceCounter?.();
