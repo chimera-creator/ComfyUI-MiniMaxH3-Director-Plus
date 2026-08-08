@@ -40,6 +40,12 @@ async function mmxdSaveProjectSource(project, source, data, path = "", projectsP
   return result.project || {};
 }
 
+function mmxdOriginForInput(target, inputName) {
+  const input = target?.inputs?.find((item) => item.name === inputName);
+  const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+  return link ? app.graph?.getNodeById(link.origin_id) : null;
+}
+
 // Verbose tracing, off by default so the browser console stays readable.
 // Run `window.MMXD_DEBUG = true` in the console (F12) and reload the workflow to get the
 // timeline JSON dumped on create / sync / save / configure — that is what to attach to a
@@ -13410,11 +13416,6 @@ app.registerExtension({
           const cloneForProject = (value) => {
             try { return JSON.parse(JSON.stringify(value)); } catch (_) { return {}; }
           };
-          const originForInput = (target, inputName) => {
-            const input = target?.inputs?.find(item => item.name === inputName);
-            const link = input?.link != null ? app.graph?.links?.[input.link] : null;
-            return link ? app.graph?.getNodeById(link.origin_id) : null;
-          };
           const snapshotNode = (sourceNode) => {
             if (!sourceNode) return null;
             const widgets = {};
@@ -13431,24 +13432,24 @@ app.registerExtension({
             ...snapshotNode(sourceNode), ...extra,
           });
           const connectedSourceNodes = () => {
-            const directCast = originForInput(node, "cast");
+            const directCast = mmxdOriginForInput(node, "cast");
             let wardrobeSource = null;
             let castingSource = null;
             if (directCast && String(directCast.comfyClass || directCast.type || "").toLowerCase().includes("wardrobe")) {
               wardrobeSource = directCast;
-              castingSource = originForInput(wardrobeSource, "cast_wardrobe");
+              castingSource = mmxdOriginForInput(wardrobeSource, "cast_wardrobe");
             } else if (directCast && String(directCast.comfyClass || directCast.type || "").toLowerCase().includes("casting")) {
               castingSource = directCast;
             }
             return { wardrobeSource, castingSource };
           };
           const enhancedSource = () => {
-            const source = originForInput(node, "global_prompt");
+            const source = mmxdOriginForInput(node, "global_prompt");
             const type = String(source?.comfyClass || source?.type || "").toLowerCase();
             return type.includes("enhance") ? source : null;
           };
           const projectConfigForNode = () => {
-            const source = originForInput(node, "project");
+            const source = mmxdOriginForInput(node, "project");
             const root = String(source?.properties?.projects_path || source?.properties?.project_root ||
               node.properties?.projects_path || node.properties?.project_root || "").trim();
             return {
@@ -13802,7 +13803,7 @@ app.registerExtension({
         };
         const refreshPrompt = async () => {
           try {
-            const enhanceSource = originForInput(self, "enhance_json");
+            const enhanceSource = mmxdOriginForInput(self, "enhance_json");
             const enhanceData = readJson(enhanceSource?.properties?.processed_director_json
               || enhanceSource?.properties?.director_json || "");
             const body = {
