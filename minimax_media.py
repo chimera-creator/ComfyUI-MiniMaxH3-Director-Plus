@@ -377,6 +377,21 @@ _ANALYZE_PROMPT = (
     "the hair belongs in appearance and the cap belongs in wardrobe."
 )
 
+_WARDROBE_ITEM_ANALYZE_SYSTEM_PROMPT = (
+    "You analyze clothing and accessory reference images for a video prompt. "
+    "Return only one valid JSON object, with no markdown, code fences, or commentary. "
+    "The object must contain exactly one string key: description. Describe only the "
+    "visible clothing or accessory item, including its type, color, material, pattern, "
+    "shape, and distinctive details. Do not describe a person, pose, background, or "
+    "the item's imagined wearer. Use a concise noun phrase beginning with an article "
+    "such as 'a' or 'an'."
+)
+
+_WARDROBE_ITEM_ANALYZE_PROMPT = (
+    "Describe the clothing or accessory item in the supplied reference image. "
+    "Return the JSON object exactly as instructed."
+)
+
 
 def _merge_character_description(appearance, wardrobe):
     """Join the structured cast fields into the legacy Director description."""
@@ -450,6 +465,37 @@ def _parse_character_analysis(text):
         "wardrobe": wardrobe,
         "description": _merge_character_description(appearance, wardrobe),
     }
+
+
+def _parse_wardrobe_item_analysis(text):
+    """Parse a wardrobe item's concise JSON description."""
+    text = strip_thinking(text).strip()
+    candidates = [text]
+    if "```" in text:
+        candidates.append(text.replace("```json", "").replace("```JSON", "")
+                         .replace("```", "").strip())
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+
+    parsed = None
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, dict):
+            parsed = value
+            break
+    if parsed is None:
+        raise VLMError("Analyze returned invalid JSON. Ask the vision model to return only "
+                        "an object with a description field.")
+
+    description = str(parsed.get("description") or "").strip()
+    if not description:
+        raise VLMError("Analyze returned an empty wardrobe item description.")
+    return {"description": description}
 
 
 def normalize_base_url(url, fallback=""):
@@ -629,6 +675,47 @@ async def analyze_character_endpoint(request):
         return web.json_response({"status": "success", **analysis})
     except Exception as e:
         log.error("[MiniMaxDirector] Failed to analyze character: %s", e)
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/minimax_director/analyze_wardrobe_item")
+async def analyze_wardrobe_item_endpoint(request):
+    try:
+        data = await request.json()
+        image_b64 = data.get("image_b64", "")
+        item_index = int(data.get("item_index", 0))
+        api_key = str(data.get("api_key") or "").strip()
+        provider, base_url, model_name = _resolve_provider(data)
+
+        if provider == "off":
+            return web.json_response({"status": "error", "message": "Analyze is set to Off / Manual."})
+        if not image_b64:
+            return web.json_response({"status": "error", "message": "No image provided for analysis."})
+
+        b64_list = image_b64 if isinstance(image_b64, list) else [image_b64]
+        cleaned = [b.split(",", 1)[1] if "," in b else b for b in b64_list]
+        if not cleaned:
+            return web.json_response({"status": "error", "message": "No valid base64 image decoded."})
+
+        log.info("[MiniMaxDirector] Analyzing wardrobe item %d via %s (%s, model '%s')...",
+                 item_index + 1, provider, base_url, model_name)
+        try:
+            generated_text = await vlm_generate(
+                cleaned, _WARDROBE_ITEM_ANALYZE_PROMPT, provider, base_url, model_name,
+                system_prompt=_WARDROBE_ITEM_ANALYZE_SYSTEM_PROMPT,
+                api_key=api_key, max_tokens=256)
+        except VLMError as e:
+            return web.json_response({"status": "error", "message": str(e)})
+
+        try:
+            analysis = _parse_wardrobe_item_analysis(generated_text)
+        except VLMError as e:
+            return web.json_response({"status": "error", "message": str(e)})
+
+        log.info("[MiniMaxDirector] Wardrobe item analysis complete: %s", analysis)
+        return web.json_response({"status": "success", **analysis})
+    except Exception as e:
+        log.error("[MiniMaxDirector] Failed to analyze wardrobe item: %s", e)
         return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 

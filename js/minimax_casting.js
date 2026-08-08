@@ -34,6 +34,15 @@ function emptyCast() {
   };
 }
 
+function analyzeSettingsPayload(cast) {
+  return JSON.stringify({
+    provider: cast?.analyzeProvider || "ollama",
+    base_url: cast?.analyzeBaseUrl || "",
+    model: cast?.analyzeModel || "",
+    api_key: cast?.analyzeApiKey || "",
+  });
+}
+
 function parseCast(value) {
   let parsed = null;
   try { parsed = typeof value === "string" ? JSON.parse(value) : value; } catch (_) { }
@@ -167,6 +176,7 @@ app.registerExtension({
           if (castWidget.element) castWidget.element.value = serialized;
         }
         node.properties = { ...(node.properties || {}), cast_data: serialized };
+        node.properties.analyze_settings_output = analyzeSettingsPayload(cast);
         node._castingData = serialized;
         node._widgetSlotsDirty = true;
         node.setDirtyCanvas?.(true, true);
@@ -174,14 +184,19 @@ app.registerExtension({
         for (const other of app.graph?._nodes || []) {
           const castInput = other.inputs?.find((input) => input.name === "cast");
           const wardrobeInput = other.inputs?.find((input) => input.name === "cast_wardrobe");
+          const settingsInput = other.inputs?.find((input) => input.name === "analyze_settings");
           const castLink = castInput?.link != null ? app.graph.links?.[castInput.link] : null;
           const wardrobeLink = wardrobeInput?.link != null ? app.graph.links?.[wardrobeInput.link] : null;
+          const settingsLink = settingsInput?.link != null ? app.graph.links?.[settingsInput.link] : null;
           if (castLink?.origin_id === node.id) {
             other._mmxRefreshCharacterSlots?.();
             other._mmxRefreshPrompt?.();
             other._mmxRefreshReferenceCounter?.();
           }
           if (wardrobeLink?.origin_id === node.id) {
+            other._wardrobeRefresh?.();
+          }
+          if (settingsLink?.origin_id === node.id) {
             other._wardrobeRefresh?.();
           }
         }
@@ -470,7 +485,7 @@ app.registerExtension({
       const title = document.createElement("span");
       title.className = "mmxd-casting-title"; title.textContent = "CASTING DIRECTOR";
       const help = document.createElement("span");
-      help.className = "mmxd-casting-help"; help.textContent = "Connect CAST to the Director's cast input";
+      help.className = "mmxd-casting-help"; help.textContent = "CAST → Director · ANALYZE SETTINGS → Wardrobe Director";
       const settingsButton = document.createElement("button");
       settingsButton.className = "mmxd-casting-settings-btn"; settingsButton.textContent = "Analyze Settings";
       settingsButton.addEventListener("click", (event) => {
@@ -516,7 +531,8 @@ app.registerExtension({
       const widget = this.widgets?.find((item) => item.name === "cast_data");
       if (widget?.value) {
         this.properties = { ...(this.properties || {}), cast_data: widget.value };
-        info.properties = { ...(info.properties || {}), cast_data: widget.value };
+        info.properties = { ...(info.properties || {}), cast_data: widget.value,
+          analyze_settings_output: this.properties.analyze_settings_output || "" };
       }
       return result;
     };

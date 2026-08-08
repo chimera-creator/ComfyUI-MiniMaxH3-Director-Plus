@@ -117,6 +117,10 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
                     display_name="CAST + WARDROBE",
                     tooltip="Character references plus wardrobe-item assignments for Wardrobe Director.",
                 ),
+                io.String.Output(
+                    display_name="ANALYZE SETTINGS",
+                    tooltip="Provider, model, URL, and optional API key for Casting/Wardrobe analysis.",
+                ),
             ],
         )
 
@@ -130,7 +134,13 @@ class MiniMaxH3CastingDirector(io.ComfyNode):
         # The second socket deliberately starts with an empty item list. The Wardrobe
         # Director owns item state; this socket is the stable cast hand-off into it.
         wardrobe_json = json.dumps({**payload, "wardrobe_items": []}, separators=(",", ":"))
-        return io.NodeOutput(cast_json, wardrobe_json)
+        analyze_settings = json.dumps({
+            "provider": value.get("analyzeProvider", "ollama"),
+            "base_url": value.get("analyzeBaseUrl", ""),
+            "model": value.get("analyzeModel", ""),
+            "api_key": value.get("analyzeApiKey", ""),
+        }, separators=(",", ":"))
+        return io.NodeOutput(cast_json, wardrobe_json, analyze_settings)
 
 
 NODE_CLASS_MAPPINGS = {"MiniMaxH3CastingDirectorPlusCS": MiniMaxH3CastingDirector}

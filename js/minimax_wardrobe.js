@@ -60,6 +60,28 @@ function sourceCastFor(node) {
   }
 }
 
+function sourceAnalyzeSettingsFor(node) {
+  try {
+    const input = node.inputs?.find((item) => item.name === "analyze_settings");
+    const link = input?.link != null ? app.graph?.links?.[input.link] : null;
+    const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+    if (!source) return null;
+    const castWidget = source.widgets?.find((item) => item.name === "cast_data");
+    const raw = source?.properties?.analyze_settings_output
+      || castWidget?.value || source?.properties?.cast_data || input?.value || "";
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      provider: String(parsed.provider || parsed.analyzeProvider || "ollama").toLowerCase(),
+      base_url: String(parsed.base_url || parsed.analyzeBaseUrl || ""),
+      model: String(parsed.model || parsed.analyzeModel || ""),
+      api_key: String(parsed.api_key || parsed.analyzeApiKey || ""),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function inputFileForImage(onFile) {
   const input = document.createElement("input");
   input.type = "file";
@@ -88,6 +110,10 @@ const WARDROBE_STYLES = `
   .mmxd-wardrobe-remove { background:#252525; color:#b66; border:1px solid #533; border-radius:3px;
     padding:1px 5px; font-size:8px; font-weight:700; cursor:pointer; }
   .mmxd-wardrobe-remove:hover { background:#4a2020; color:#ff9999; border-color:#a55; }
+  .mmxd-wardrobe-analyze { background:#252525; color:#8fd8aa; border:1px solid #365844; border-radius:3px;
+    padding:1px 5px; font-size:8px; font-weight:700; cursor:pointer; }
+  .mmxd-wardrobe-analyze:hover { background:#1a3a2a; color:#4fff8f; border-color:#4fff8f; }
+  .mmxd-wardrobe-analyze.loading { color:#888; border-color:#444; cursor:wait; pointer-events:none; }
   .mmxd-wardrobe-preview-wrap { width:100%; height:58px; margin-top:4px; position:relative;
     border-radius:3px; background:#111; overflow:hidden; cursor:pointer; }
   .mmxd-wardrobe-preview { width:100%; height:100%; object-fit:contain; pointer-events:none; }
@@ -129,10 +155,15 @@ app.registerExtension({
       originalCreated?.apply(this, arguments);
       const node = this;
       const castInput = node.inputs?.find((input) => input.name === "cast_wardrobe");
+      const analyzeSettingsInput = node.inputs?.find((input) => input.name === "analyze_settings");
       const wardrobeWidget = node.widgets?.find((widget) => widget.name === "wardrobe_data");
       if (castInput) {
         castInput.hidden = true;
         castInput.options = { ...(castInput.options || {}), hidden: true };
+      }
+      if (analyzeSettingsInput) {
+        analyzeSettingsInput.hidden = true;
+        analyzeSettingsInput.options = { ...(analyzeSettingsInput.options || {}), hidden: true };
       }
       if (wardrobeWidget) {
         wardrobeWidget.hidden = true;
@@ -211,6 +242,47 @@ app.registerExtension({
           context.fillStyle = "#181818";
         });
         return canvas.toDataURL("image/jpeg", 0.88);
+      };
+
+      const analyzeItem = async (index, button) => {
+        if (button.classList.contains("loading")) return;
+        const settings = sourceAnalyzeSettingsFor(node);
+        if (!settings || settings.provider === "off") {
+          alert("Connect the Casting Director's ANALYZE SETTINGS output and enable analysis.");
+          return;
+        }
+        const image = wardrobe.items[index]?.images?.[0];
+        const imageB64 = await imageDataUrl(image);
+        if (!imageB64) {
+          alert("No readable item image is available for analysis.");
+          return;
+        }
+        button.classList.add("loading");
+        button.textContent = "...";
+        const body = {
+          image_b64: [imageB64],
+          item_index: index,
+          provider: settings.provider,
+          base_url: settings.base_url,
+          model: settings.model,
+        };
+        if (settings.api_key && (settings.provider === "lmstudio" || settings.provider === "custom")) {
+          body.api_key = settings.api_key;
+        }
+        try {
+          const response = await api.fetchApi("/minimax_director/analyze_wardrobe_item", {
+            method: "POST", body: JSON.stringify(body),
+          });
+          const result = await response.json();
+          if (result.status !== "success") throw new Error(result.message || "Analysis failed");
+          wardrobe.items[index].description = String(result.description || "").trim();
+          renderItems();
+          save();
+        } catch (error) {
+          alert("Wardrobe Analysis Error: " + (error.message || error));
+          button.classList.remove("loading");
+          button.textContent = "ANALYZE";
+        }
       };
 
       const buildOutput = async () => {
@@ -327,9 +399,13 @@ app.registerExtension({
       const renderItems = () => {
         itemsContainer.innerHTML = "";
         const cast = sourceCastFor(node);
+        const analyzeSettings = sourceAnalyzeSettingsFor(node);
+        const canAnalyze = !!analyzeSettings && analyzeSettings.provider !== "off";
         const characterCount = Math.min(MAX_CHARACTERS, cast?.characters?.length || 0);
         status.textContent = cast
-          ? `Connected cast: ${characterCount} active character${characterCount === 1 ? "" : "s"}. Assign each item to one or more characters.`
+          ? `Connected cast: ${characterCount} active character${characterCount === 1 ? "" : "s"}. ` +
+            (canAnalyze ? `Item analysis: ${analyzeSettings.provider}.` :
+              "Connect ANALYZE SETTINGS to analyze item descriptions.")
           : "Connect CAST + WARDROBE from Casting Director to assign items to characters.";
         for (let index = 0; index < MAX_WARDROBE_ITEMS; index++) {
           const item = wardrobe.items[index] || emptyItem();
@@ -353,6 +429,20 @@ app.registerExtension({
           label.className = "mmxd-wardrobe-item-label";
           label.textContent = `ITEM ${index + 1}`;
           cardHead.appendChild(label);
+          const actions = document.createElement("span");
+          actions.style.display = "flex";
+          actions.style.gap = "3px";
+          if (item.images.length && canAnalyze) {
+            const analyze = document.createElement("button");
+            analyze.className = "mmxd-wardrobe-analyze";
+            analyze.textContent = "ANALYZE";
+            analyze.title = "Analyze this clothing/accessory image";
+            analyze.addEventListener("click", (event) => {
+              event.stopPropagation();
+              analyzeItem(index, analyze);
+            });
+            actions.appendChild(analyze);
+          }
           if (item.images.length || String(item.description || "").trim() || item.character_slots.length) {
             const remove = document.createElement("button");
             remove.className = "mmxd-wardrobe-remove";
@@ -360,8 +450,9 @@ app.registerExtension({
             remove.addEventListener("click", (event) => {
               event.stopPropagation(); wardrobe.items[index] = emptyItem(); renderItems(); save();
             });
-            cardHead.appendChild(remove);
+            actions.appendChild(remove);
           }
+          cardHead.appendChild(actions);
           card.appendChild(cardHead);
 
           const previewWrap = document.createElement("div");
@@ -434,7 +525,7 @@ app.registerExtension({
       title.textContent = "WARDROBE DIRECTOR";
       const help = document.createElement("span");
       help.className = "mmxd-wardrobe-help";
-      help.textContent = "Assign clothing and accessories to cast members";
+      help.textContent = "Assign clothing/accessories · connect ANALYZE SETTINGS for item analysis";
       head.appendChild(title); head.appendChild(help);
       const status = document.createElement("div");
       status.className = "mmxd-wardrobe-status";

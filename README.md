@@ -89,8 +89,8 @@ Six nodes, category **MiniMax H3**:
 | Node | What it does |
 |---|---|
 | **MiniMax H3 Director Plus** | The timeline. Outputs a patched `model`, the compiled `positive` conditioning, an empty joint AV `latent`, the muxed `combined_audio`, plus `fps` / `width` / `height` / `length` / `prompt` / `retake_info`. |
-| **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. |
-| **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` from Casting Director, then connect its output to the Director's `cast` input. |
+| **MiniMax H3 Casting Director Plus** | A reusable nine-slot character editor. Connect its `CAST` output to the Director's `cast` input; without that connection, the Director's built-in character slots continue to work. Its `ANALYZE SETTINGS` output can connect to Wardrobe Director for item analysis. |
+| **MiniMax H3 Wardrobe Director Plus** | Assign up to eighteen clothing/accessory reference images and descriptions to the active cast. It creates one wardrobe collage per character. Connect `CAST + WARDROBE` and optionally `ANALYZE SETTINGS` from Casting Director, then connect its output to the Director's `cast` input. |
 | **MiniMax H3 Preview Override Plus** | Watch the whole shot denoise, not a single frozen frame. |
 | **MiniMax H3 Retake Stitch Plus** | Splices a regenerated range back into the base video. |
 | **MiniMax H3 Enhance Prompt Plus** | A local vision model writes the prompt from your reference images. |
@@ -294,6 +294,9 @@ accessory reference image into an item, enter its item description, and assign i
 or more active characters. It creates one collage per character containing every assigned
 item, then sends those collages and their final item descriptions in a separate
 `wardrobe_definitions` prompt section directly below `subject_definitions`.
+Connect the Casting Director's `ANALYZE SETTINGS` output to enable an **ANALYZE** button
+on each item; the same provider, model, URL, and optional API key are used for the item
+description analysis.
 
 **Keyframes go on the first and last frame only.** H3's `PackedLayout` anchors exactly
 those two positions; an image stranded in the middle of a window is reported in the

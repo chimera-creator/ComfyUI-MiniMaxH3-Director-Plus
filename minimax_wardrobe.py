@@ -165,6 +165,10 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
                     tooltip="CAST + WARDROBE output from MiniMax H3 Casting Director Plus.",
                 ),
                 io.String.Input(
+                    "analyze_settings", force_input=True, optional=True,
+                    tooltip="ANALYZE SETTINGS output from Casting Director Plus. Enables item analysis.",
+                ),
+                io.String.Input(
                     "wardrobe_data", multiline=True, default=json.dumps(_empty_wardrobe()),
                     tooltip="JSON state of the Wardrobe Director UI (auto-managed; do not edit by hand).",
                 ),
@@ -178,7 +182,7 @@ class MiniMaxH3WardrobeDirector(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, cast_wardrobe="", wardrobe_data="") -> io.NodeOutput:
+    def execute(cls, cast_wardrobe="", analyze_settings="", wardrobe_data="") -> io.NodeOutput:
         cast = _normalise_cast(cast_wardrobe)
         active_characters = [
             {**character, "hired": True}
