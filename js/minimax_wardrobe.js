@@ -137,7 +137,9 @@ const WARDROBE_STYLES = `
     border:1px solid #444; border-radius:4px; font-size:8px; font-weight:700; cursor:pointer; }
   .mmxd-wardrobe-project-button:hover { color:#fff; border-color:#777; }
   .mmxd-wardrobe-status { color:#666; font-size:9px; margin:0 0 7px; }
-  .mmxd-wardrobe-items { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; width:100%; }
+  .mmxd-wardrobe-items { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; width:100%;
+    height:680px; max-height:680px; overflow-y:auto; overflow-x:hidden; align-content:start;
+    padding-right:5px; box-sizing:border-box; }
   .mmxd-wardrobe-item { min-width:0; height:220px; box-sizing:border-box; background:#1e1e1e;
     border:1.5px dashed #444; border-radius:7px; padding:5px; position:relative; overflow:hidden; }
   .mmxd-wardrobe-item:hover { border-color:#666; background:#252525; }
@@ -217,7 +219,7 @@ app.registerExtension({
       });
       uiWidget.serialize = false;
       uiWidget.computeSize = function (width) {
-        return [Math.max(10, width || node.size?.[0] || 760), 1540];
+        return [Math.max(10, width || node.size?.[0] || 760), 820];
       };
 
       let wardrobe = parseWardrobe(wardrobeWidget?.value || "");
