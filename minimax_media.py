@@ -19,6 +19,7 @@ import math
 import os
 import platform
 import subprocess
+from urllib.parse import urlsplit, urlunsplit
 import wave
 
 import av
@@ -381,6 +382,21 @@ def _resolve_provider(data):
     return provider, base_url, model
 
 
+def _openai_chat_completions_url(base_url):
+    """Accept an OpenAI-compatible host, ``/v1`` base, or full endpoint URL."""
+    base_url = normalize_base_url(base_url)
+    parsed = urlsplit(base_url)
+    path = (parsed.path or "").rstrip("/")
+    lower_path = path.lower()
+    if lower_path.endswith("/chat/completions"):
+        return base_url
+    if lower_path.endswith("/v1"):
+        path += "/chat/completions"
+    else:
+        path += "/v1/chat/completions"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
 class VLMError(RuntimeError):
     """A VLM round-trip that failed with a message worth showing the user verbatim."""
 
@@ -453,10 +469,11 @@ async def vlm_generate(images_b64, prompt, provider, base_url, model,
                 api_key = str(api_key or "").strip()
                 if api_key:
                     request_kwargs["headers"] = {"Authorization": "Bearer %s" % api_key}
-                async with session.post("%s/v1/chat/completions" % base_url,
-                                        **request_kwargs) as response:
+                chat_url = _openai_chat_completions_url(base_url)
+                async with session.post(chat_url, **request_kwargs) as response:
                     if response.status != 200:
-                        raise VLMError("%s HTTP %s: %s" % (provider, response.status, await response.text()))
+                        raise VLMError("%s HTTP %s at %s: %s" %
+                                       (provider, response.status, chat_url, await response.text()))
                     resp_json = await response.json()
                     try:
                         msg = resp_json["choices"][0]["message"]
