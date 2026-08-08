@@ -23,17 +23,17 @@ async def comfy_entrypoint() -> MiniMaxH3DirectorExtension:
 
 
 NODE_CLASS_MAPPINGS = {
-    "MiniMaxH3DirectorCS": MiniMaxH3Director,
-    "MiniMaxH3PreviewOverrideCS": MiniMaxH3PreviewOverride,
-    "MiniMaxH3RetakeStitchCS": MiniMaxH3RetakeStitch,
-    "MiniMaxH3EnhancePromptCS": MiniMaxH3EnhancePrompt,
+    "MiniMaxH3DirectorPlusCS": MiniMaxH3Director,
+    "MiniMaxH3PreviewOverridePlusCS": MiniMaxH3PreviewOverride,
+    "MiniMaxH3RetakeStitchPlusCS": MiniMaxH3RetakeStitch,
+    "MiniMaxH3EnhancePromptPlusCS": MiniMaxH3EnhancePrompt,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3DirectorCS": "MiniMax H3 Director Plus",
-    "MiniMaxH3PreviewOverrideCS": "MiniMax H3 Preview Override Plus",
-    "MiniMaxH3RetakeStitchCS": "MiniMax H3 Retake Stitch Plus",
-    "MiniMaxH3EnhancePromptCS": "MiniMax H3 Enhance Prompt Plus",
+    "MiniMaxH3DirectorPlusCS": "MiniMax H3 Director Plus",
+    "MiniMaxH3PreviewOverridePlusCS": "MiniMax H3 Preview Override Plus",
+    "MiniMaxH3RetakeStitchPlusCS": "MiniMax H3 Retake Stitch Plus",
+    "MiniMaxH3EnhancePromptPlusCS": "MiniMax H3 Enhance Prompt Plus",
 }
 
 WEB_DIRECTORY = "./js"

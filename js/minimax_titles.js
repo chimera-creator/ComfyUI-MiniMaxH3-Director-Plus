@@ -9,17 +9,17 @@
 const { app } = window.comfyAPI.app;
 
 const RENAMED = {
-  MiniMaxH3DirectorCS: "MiniMax H3 Director Plus",
-  MiniMaxH3PreviewOverrideCS: "MiniMax H3 Preview Override Plus",
-  MiniMaxH3RetakeStitchCS: "MiniMax H3 Retake Stitch Plus",
-  MiniMaxH3DirectorChainCS: "MiniMax H3 Director Chain Plus",
+  MiniMaxH3DirectorPlusCS: "MiniMax H3 Director Plus",
+  MiniMaxH3PreviewOverridePlusCS: "MiniMax H3 Preview Override Plus",
+  MiniMaxH3RetakeStitchPlusCS: "MiniMax H3 Retake Stitch Plus",
+  MiniMaxH3DirectorChainPlusCS: "MiniMax H3 Director Chain Plus",
 };
 
 const LEGACY_NAMES = {
-  MiniMaxH3DirectorCS: "MiniMax H3 Director",
-  MiniMaxH3PreviewOverrideCS: "MiniMax H3 Preview Override",
-  MiniMaxH3RetakeStitchCS: "MiniMax H3 Retake Stitch",
-  MiniMaxH3DirectorChainCS: "MiniMax H3 Director Chain",
+  MiniMaxH3DirectorPlusCS: "MiniMax H3 Director",
+  MiniMaxH3PreviewOverridePlusCS: "MiniMax H3 Preview Override",
+  MiniMaxH3RetakeStitchPlusCS: "MiniMax H3 Retake Stitch",
+  MiniMaxH3DirectorChainPlusCS: "MiniMax H3 Director Chain",
 };
 
 function healTitle(node) {
@@ -37,7 +37,7 @@ function healTitle(node) {
 }
 
 app.registerExtension({
-  name: "MiniMaxH3.TitleCleanup",
+  name: "MiniMaxH3Plus.TitleCleanup",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (!RENAMED[nodeData.name]) return;

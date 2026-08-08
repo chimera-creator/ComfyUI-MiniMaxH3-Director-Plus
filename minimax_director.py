@@ -222,7 +222,7 @@ class MiniMaxH3Director(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="MiniMaxH3DirectorCS",
+            node_id="MiniMaxH3DirectorPlusCS",
             display_name="MiniMax H3 Director Plus",
             category="MiniMax H3",
             description=(
@@ -582,5 +582,5 @@ class MiniMaxH3Director(io.ComfyNode):
                              retake_info)
 
 
-NODE_CLASS_MAPPINGS = {"MiniMaxH3DirectorCS": MiniMaxH3Director}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorCS": "MiniMax H3 Director Plus"}
+NODE_CLASS_MAPPINGS = {"MiniMaxH3DirectorPlusCS": MiniMaxH3Director}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorPlusCS": "MiniMax H3 Director Plus"}

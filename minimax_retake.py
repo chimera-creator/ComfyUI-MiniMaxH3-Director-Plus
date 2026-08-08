@@ -86,7 +86,7 @@ class MiniMaxH3RetakeStitch(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="MiniMaxH3RetakeStitchCS",
+            node_id="MiniMaxH3RetakeStitchPlusCS",
             display_name="MiniMax H3 Retake Stitch Plus",
             category="MiniMax H3",
             description=(
@@ -195,5 +195,5 @@ class MiniMaxH3RetakeStitch(io.ComfyNode):
                              MODEL_FPS)
 
 
-NODE_CLASS_MAPPINGS = {"MiniMaxH3RetakeStitchCS": MiniMaxH3RetakeStitch}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3RetakeStitchCS": "MiniMax H3 Retake Stitch Plus"}
+NODE_CLASS_MAPPINGS = {"MiniMaxH3RetakeStitchPlusCS": MiniMaxH3RetakeStitch}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3RetakeStitchPlusCS": "MiniMax H3 Retake Stitch Plus"}

@@ -328,7 +328,7 @@ class MiniMaxH3PreviewOverride(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="MiniMaxH3PreviewOverrideCS",
+            node_id="MiniMaxH3PreviewOverridePlusCS",
             display_name="MiniMax H3 Preview Override Plus",
             category="MiniMax H3",
             description=(

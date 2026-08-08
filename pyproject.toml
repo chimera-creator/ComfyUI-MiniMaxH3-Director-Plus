@@ -1,5 +1,5 @@
 [project]
-name = "minimaxh3-director"
+name = "minimaxh3-director-plus"
 description = "A timeline editor for MiniMax H3 — storyboard prompts, first/last keyframes, image/video/audio references, native joint audio, live sampling preview, retakes and shot chaining."
 version = "0.1.5"
 license = { file = "LICENSE" }

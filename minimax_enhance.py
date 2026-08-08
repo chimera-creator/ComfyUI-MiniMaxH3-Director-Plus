@@ -372,7 +372,7 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="MiniMaxH3EnhancePromptCS",
+            node_id="MiniMaxH3EnhancePromptPlusCS",
             display_name="MiniMax H3 Enhance Prompt Plus",
             category="MiniMax H3",
             description=(
@@ -602,5 +602,5 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
         return io.NodeOutput(prompt, batched, float(duration_seconds))
 
 
-NODE_CLASS_MAPPINGS = {"MiniMaxH3EnhancePromptCS": MiniMaxH3EnhancePrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3EnhancePromptCS": "MiniMax H3 Enhance Prompt Plus"}
+NODE_CLASS_MAPPINGS = {"MiniMaxH3EnhancePromptPlusCS": MiniMaxH3EnhancePrompt}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3EnhancePromptPlusCS": "MiniMax H3 Enhance Prompt Plus"}

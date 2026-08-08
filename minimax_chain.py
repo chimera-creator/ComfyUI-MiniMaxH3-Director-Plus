@@ -106,7 +106,7 @@ class MiniMaxH3DirectorChain(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="MiniMaxH3DirectorChainCS",
+            node_id="MiniMaxH3DirectorChainPlusCS",
             display_name="MiniMax H3 Director Chain Plus",
             category="MiniMax H3",
             description=(
@@ -328,5 +328,5 @@ class MiniMaxH3DirectorChain(io.ComfyNode):
                              MODEL_FPS, int(out_images.shape[0]), "\n\n".join(prompts))
 
 
-NODE_CLASS_MAPPINGS = {"MiniMaxH3DirectorChainCS": MiniMaxH3DirectorChain}
-NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorChainCS": "MiniMax H3 Director Chain Plus"}
+NODE_CLASS_MAPPINGS = {"MiniMaxH3DirectorChainPlusCS": MiniMaxH3DirectorChain}
+NODE_DISPLAY_NAME_MAPPINGS = {"MiniMaxH3DirectorChainPlusCS": "MiniMax H3 Director Chain Plus"}

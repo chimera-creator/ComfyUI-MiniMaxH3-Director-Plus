@@ -75,9 +75,11 @@ goes out.
 
 **`LICENSE`.** The GPL-3.0 text must stay verbatim.
 
-**Node IDs.** `MiniMaxH3DirectorCS`, `MiniMaxH3PreviewOverrideCS`, `MiniMaxH3RetakeStitchCS`
-and `MiniMaxH3EnhancePromptCS` keep the `CS` suffix forever. Renaming one breaks every
-saved workflow that uses it. The display names already dropped it, which is fine.
+**Node IDs.** The original package uses `MiniMaxH3DirectorCS`,
+`MiniMaxH3PreviewOverrideCS`, `MiniMaxH3RetakeStitchCS` and
+`MiniMaxH3EnhancePromptCS`. This Plus package uses the corresponding `PlusCS` IDs so both
+packages can be installed together. Keep each package's IDs stable after release;
+renaming them breaks saved workflows that use them.
 
 ## Four rules the code depends on
 

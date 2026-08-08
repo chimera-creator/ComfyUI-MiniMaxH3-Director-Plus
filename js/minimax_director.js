@@ -12403,18 +12403,18 @@ const APPENDED_WIDGET_DEFAULTS = [
 ];
 
 app.registerExtension({
-  name: "MiniMaxH3DirectorCS",
+  name: "MiniMaxH3DirectorPlusCS",
   async setup() {
     // On Run, ask the chosen analyze backend to release its model from VRAM so it doesn't
     // compete with MiniMax H3 generation. Only fires when an MiniMax H3 Director is in the graph and its
     // provider isn't "off". Fully tolerant: failures are swallowed so they never block a run.
-    if (app._mmxDirectorUnloadHookInstalled) return;
-    app._mmxDirectorUnloadHookInstalled = true;
+    if (app._mmxDirectorPlusUnloadHookInstalled) return;
+    app._mmxDirectorPlusUnloadHookInstalled = true;
     const origQueuePrompt = app.queuePrompt;
     app.queuePrompt = async function (...args) {
       try {
         const nodes = app.graph?._nodes || [];
-        const director = nodes.find(n => n && (n.comfyClass === "MiniMaxH3DirectorCS" || n.type === "MiniMaxH3DirectorCS"));
+        const director = nodes.find(n => n && (n.comfyClass === "MiniMaxH3DirectorPlusCS" || n.type === "MiniMaxH3DirectorPlusCS"));
         if (director) {
           // Read provider settings from the node's saved timeline_data widget.
           let provider = "ollama", baseUrl = "", model = "";
@@ -12441,7 +12441,7 @@ app.registerExtension({
     };
   },
   async beforeRegisterNodeDef(nodeType, nodeData, app) {
-    if (nodeData.name === "MiniMaxH3DirectorCS") {
+    if (nodeData.name === "MiniMaxH3DirectorPlusCS") {
 
       const onNodeCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = function () {
