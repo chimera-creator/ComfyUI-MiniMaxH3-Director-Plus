@@ -11196,6 +11196,7 @@ class TimelineEditor {
       // timeline .json updates the widgets (generation is correct) but the panel keeps
       // displaying the previous Duration/Start/End/resolution values.
       if (this.node._mmxSettingsRefresh) { try { this.node._mmxSettingsRefresh(); } catch (_) { } }
+      if (this.node._mmxRefreshReferenceCounter) { try { this.node._mmxRefreshReferenceCounter(); } catch (_) { } }
 
       // Trigger ComfyUI's change-detection pipeline the same way a real user
       // interaction does: by dispatching a pointerup on the canvas. This fires
@@ -12580,6 +12581,7 @@ app.registerExtension({
             origOnConnectionsChange.apply(this, arguments);
           }
           self._syncGlobalPromptFromLink();
+          self._mmxRefreshReferenceCounter?.();
         };
 
         const origOnDrawForeground = this.onDrawForeground;
@@ -12627,7 +12629,8 @@ app.registerExtension({
           };
 
           Object.assign(panelRoot.style, {
-            display: "flex", gap: "8px", width: "100%", boxSizing: "border-box", padding: "0 2px",
+            display: "flex", flexDirection: "column", gap: "8px", width: "100%",
+            boxSizing: "border-box", padding: "0 2px",
           });
 
           const mkCol = (title) => {
@@ -12897,8 +12900,115 @@ app.registerExtension({
           refSel.addEventListener("change", () => setW("ref_image_size", refSel.value));
           refRow.appendChild(refSel); right.appendChild(refRow);
 
-          panelRoot.appendChild(left);
-          panelRoot.appendChild(right);
+          const columns = document.createElement("div");
+          Object.assign(columns.style, {
+            display: "flex", gap: "8px", width: "100%", boxSizing: "border-box",
+          });
+          columns.appendChild(left);
+          columns.appendChild(right);
+
+          const referenceBudget = document.createElement("div");
+          Object.assign(referenceBudget.style, {
+            display: "flex", alignItems: "center", gap: "8px", width: "100%",
+            boxSizing: "border-box", padding: "5px 8px", background: "#181818",
+            border: "1px solid #3a3a3a", borderRadius: "6px", minHeight: "28px",
+          });
+          const referenceBudgetTitle = document.createElement("span");
+          Object.assign(referenceBudgetTitle.style, {
+            color: "#888", fontSize: "9px", fontWeight: "700", letterSpacing: "0.5px",
+            textTransform: "uppercase", whiteSpace: "nowrap",
+          });
+          const referenceBudgetText = document.createElement("span");
+          Object.assign(referenceBudgetText.style, {
+            color: "#bdbdbd", fontSize: "10px", fontFamily: "ui-monospace, Consolas, monospace",
+            whiteSpace: "nowrap",
+          });
+          const referenceBudgetHint = document.createElement("span");
+          Object.assign(referenceBudgetHint.style, {
+            color: "#666", fontSize: "9px", marginLeft: "auto", textAlign: "right",
+          });
+          referenceBudget.appendChild(referenceBudgetTitle);
+          referenceBudget.appendChild(referenceBudgetText);
+          referenceBudget.appendChild(referenceBudgetHint);
+
+          const readJson = (value) => {
+            try { return value ? JSON.parse(value) : {}; } catch (_) { return {}; }
+          };
+          const readTimelineForBudget = () => {
+            if (node._timelineEditor?.timeline) return node._timelineEditor.timeline;
+            return readJson(getW("timeline_data")?.value || "");
+          };
+          const readConnectedCastForBudget = () => {
+            try {
+              const castInput = node.inputs?.find(input => input.name === "cast");
+              const link = castInput?.link != null ? app.graph?.links?.[castInput.link] : null;
+              const source = link ? app.graph?.getNodeById(link.origin_id) : null;
+              const widget = source?.widgets?.find(item => item.name === "cast_data");
+              return readJson(widget?.value || source?.properties?.cast_data || "");
+            } catch (_) {
+              return {};
+            }
+          };
+          const overlapsBudgetWindow = (segment, start, end) => {
+            const segStart = Number(segment?.start || 0);
+            const segLength = Math.max(1, Number(segment?.length || 1));
+            return segStart < end && segStart + segLength > start;
+          };
+          const refreshReferenceCounter = () => {
+            const timeline = readTimelineForBudget();
+            const externalCast = readConnectedCastForBudget();
+            const characters = Array.isArray(externalCast.characters)
+              ? externalCast.characters
+              : (Array.isArray(timeline.characters) ? timeline.characters : []);
+            const characterImages = characters.reduce((sum, character) =>
+              sum + (Array.isArray(character?.images) ? character.images.length : 0), 0);
+            const extraImageInput = node.inputs?.some(input =>
+              input.name === "ref_images" && input.link != null) ? 1 : 0;
+            const start = Math.max(0, Number(getW("start_frame")?.value ?? timeline.normalStartFrame ?? 0));
+            const duration = Math.max(1, Number(getW("duration_frames")?.value ?? timeline.normalDurationFrames ?? 120));
+            const end = start + duration;
+            const timelineImages = (timeline.segments || []).filter(segment =>
+              (segment?.imageFile || segment?.imageB64) && overlapsBudgetWindow(segment, start, end)).length;
+            const videos = (timeline.motionSegments || []).filter(segment =>
+              (segment?.videoFile || segment?._blobUrl || segment?.videoEl) &&
+              overlapsBudgetWindow(segment, start, end)).length;
+            const audios = (timeline.audioSegments || []).filter(segment =>
+              (segment?.audioFile || segment?.audioB64 || segment?._blobUrl || segment?._audioBuffer) &&
+              overlapsBudgetWindow(segment, start, end)).length;
+            const images = characterImages + extraImageInput + timelineImages;
+            const total = images + videos + audios;
+            const overImage = images > 9;
+            const overVideo = videos > 3;
+            const overAudio = audios > 3;
+            const overTotal = total > 12;
+            const refModeOn = String(timeline.reference_mode || "OFF").toUpperCase() !== "OFF";
+
+            referenceBudgetTitle.textContent = refModeOn ? "Reference Budget" : "Reference Budget (Refs OFF)";
+            referenceBudgetText.textContent =
+              `Images ${images}/9  ·  Video ${videos}/3  ·  Audio ${audios}/3  ·  Total ${total}/12`;
+            referenceBudgetText.style.color = (overImage || overVideo || overAudio || overTotal) ? "#ff8888" : "#bdbdbd";
+            referenceBudget.style.borderColor = (overImage || overVideo || overAudio || overTotal) ? "#7a3838" : "#3a3a3a";
+            if (overImage || overVideo || overAudio || overTotal) {
+              const exceeded = [];
+              if (overImage) exceeded.push("images > 9");
+              if (overVideo) exceeded.push("video > 3");
+              if (overAudio) exceeded.push("audio > 3");
+              if (overTotal) exceeded.push("total > 12");
+              referenceBudgetHint.textContent = `Over limit: ${exceeded.join(", ")}`;
+              referenceBudgetHint.style.color = "#d86f6f";
+            } else {
+              referenceBudgetHint.textContent = refModeOn
+                ? "Character cast + timeline references in the current window"
+                : "Reference files are not sent until Refs ON";
+              referenceBudgetHint.style.color = "#666";
+            }
+            referenceBudget.title = "Images include cast images, the ref_images input, and timeline image anchors. "
+              + "Video and audio counts use clips overlapping the current render window.";
+          };
+          node._mmxRefreshReferenceCounter = refreshReferenceCounter;
+          panelRoot.appendChild(referenceBudget);
+          panelRoot.appendChild(columns);
+          refreshReferenceCounter();
 
           // Re-read widget values into the panel. Saved values are restored AFTER onNodeCreated,
           // so we must refresh on load (onConfigure + a post-tick) or the panel shows defaults.
@@ -12914,6 +13024,7 @@ app.registerExtension({
             if (typeof unitSel !== "undefined" && unitSel) unitSel.value = timeMode();
             timeRefreshers.forEach(fn => fn());
             ensureTimingHidden();
+            refreshReferenceCounter();
           };
           node._mmxSettingsRefresh = refreshFromWidgets;
           refreshFromWidgets();
@@ -12932,7 +13043,7 @@ app.registerExtension({
           getValue: () => "",
           setValue: () => { },
         });
-        settingsWidget.computeSize = function () { return [0, 184]; };
+        settingsWidget.computeSize = function () { return [0, 220]; };
         const _mmxOrigOnConfigure = this.onConfigure;
         this.onConfigure = function () {
           if (_mmxOrigOnConfigure) _mmxOrigOnConfigure.apply(this, arguments);

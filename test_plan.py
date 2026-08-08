@@ -203,6 +203,14 @@ merged_cast = plan.merge_cast(
 )
 check("external cast replaces the Director character slots",
       merged_cast["characters"][0]["images"][0]["name"], "cast.png")
+nine_image_cast = json.dumps({
+    "characters": [{"images": [{"name": "%d.png" % i} for i in range(3)]},
+                    {"images": [{"name": "%d.png" % i} for i in range(3, 6)]},
+                    {"images": [{"name": "%d.png" % i} for i in range(6, 9)]}],
+})
+check("external cast preserves nine character images",
+      sum(len(character["images"]) for character in
+          plan.merge_cast({}, nine_image_cast)["characters"]), 9)
 check_in("external cast descriptions feed @char substitution",
          "a detective in a blue coat turns around",
          compile(tl([img(0, 144, prompt="@char1 turns around")], ref_mode="OFF",

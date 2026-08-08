@@ -10,6 +10,7 @@ const CASTING_DEFAULTS = {
   analyzeModel: "",
   analyzeApiKey: "",
 };
+const MAX_CAST_IMAGES = 9;
 
 const emptyCharacter = () => ({ images: [], description: "" });
 
@@ -141,7 +142,10 @@ app.registerExtension({
           const castInput = other.inputs?.find((input) => input.name === "cast");
           if (castInput?.link != null) {
             const link = app.graph.links?.[castInput.link];
-            if (link?.origin_id === node.id) other._mmxRefreshPrompt?.();
+            if (link?.origin_id === node.id) {
+              other._mmxRefreshPrompt?.();
+              other._mmxRefreshReferenceCounter?.();
+            }
           }
         }
       };
@@ -211,7 +215,12 @@ app.registerExtension({
             if (!stored) stored = { b64: canvas.toDataURL("image/jpeg", 0.95), name: file.name };
 
             const images = cast.characters[index].images || (cast.characters[index].images = []);
-            if (images.length >= 2) images.shift();
+            const totalImages = cast.characters.reduce((sum, character) =>
+              sum + (character.images || []).length, 0);
+            if (totalImages >= MAX_CAST_IMAGES) {
+              alert(`Casting Director supports up to ${MAX_CAST_IMAGES} character images total.`);
+              return;
+            }
             images.push(stored);
             renderSlots();
             save();
@@ -392,7 +401,7 @@ app.registerExtension({
       slots.className = "mmxd-casting-slots";
       const footer = document.createElement("div");
       footer.className = "mmxd-casting-footer";
-      footer.textContent = "Up to two reference images per character. @char1–@char3 work in Director prompts.";
+      footer.textContent = "Up to 9 reference images total across the three characters. @char1–@char3 work in Director prompts.";
       container.appendChild(head); container.appendChild(settings); container.appendChild(slots); container.appendChild(footer);
 
       const refresh = () => {
