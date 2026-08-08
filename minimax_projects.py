@@ -69,10 +69,17 @@ def normalise_projects_path(value: str | None) -> str:
 
 def _project_dir(project_name: str, project_path: str | None = None,
                 projects_path: str | None = None) -> str:
+    safe_name = normalise_project_name(project_name)
+    # The Project node's selected Projects root is the current contract. An exact
+    # project_path is retained only for legacy/path-only callers. Previously a stale
+    # derived project_path won whenever both were sent, redirecting saves back to the
+    # node's default Projects folder after the user browsed to a different root.
+    if projects_path:
+        root = normalise_projects_path(projects_path)
+        return os.path.abspath(os.path.join(root, safe_name))
     if project_path:
         return normalise_project_path(project_path)
-    safe_name = normalise_project_name(project_name)
-    root = normalise_projects_path(projects_path)
+    root = normalise_projects_path(None)
     return os.path.abspath(os.path.join(root, safe_name))
 
 

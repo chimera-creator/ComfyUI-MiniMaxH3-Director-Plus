@@ -12,25 +12,28 @@
 const { app } = window.comfyAPI.app;
 const { api } = window.comfyAPI.api;
 
-async function mmxdFetchProjects(path = "") {
-  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+async function mmxdFetchProjects(projectsPath = "") {
+  const query = projectsPath ? `?projects_path=${encodeURIComponent(projectsPath)}` : "";
   const response = await api.fetchApi(`/minimax_director/projects${query}`);
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not list projects");
   return Array.isArray(result.projects) ? result.projects : [];
 }
 
-async function mmxdLoadProject(name, path = "") {
-  const query = `name=${encodeURIComponent(name)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
+async function mmxdLoadProject(name, path = "", projectsPath = "") {
+  const query = `name=${encodeURIComponent(name)}`
+    + `${path ? `&path=${encodeURIComponent(path)}` : ""}`
+    + `${projectsPath ? `&projects_path=${encodeURIComponent(projectsPath)}` : ""}`;
   const response = await api.fetchApi(`/minimax_director/projects/load?${query}`);
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not load project");
   return result.project || {};
 }
 
-async function mmxdSaveProjectSource(project, source, data, path = "") {
+async function mmxdSaveProjectSource(project, source, data, path = "", projectsPath = "") {
   const response = await api.fetchApi("/minimax_director/projects/save", {
-    method: "POST", body: JSON.stringify({ project, source, data, path }),
+    method: "POST", body: JSON.stringify({ project, source, data, path,
+      projects_path: projectsPath }),
   });
   const result = await response.json();
   if (result.status !== "success") throw new Error(result.message || "Could not save project");
@@ -13446,10 +13449,12 @@ app.registerExtension({
           };
           const projectConfigForNode = () => {
             const source = originForInput(node, "project");
+            const root = String(source?.properties?.projects_path || source?.properties?.project_root ||
+              node.properties?.projects_path || node.properties?.project_root || "").trim();
             return {
-              path: String(source?.properties?.project_path || node.properties?.project_path || "").trim(),
-              root: String(source?.properties?.projects_path || source?.properties?.project_root ||
-                node.properties?.projects_path || node.properties?.project_root || "").trim(),
+              path: root ? "" : String(source?.properties?.project_path
+                || node.properties?.project_path || "").trim(),
+              root,
             };
           };
           const projectPathForNode = () => {
@@ -13466,7 +13471,9 @@ app.registerExtension({
               return;
             }
             const projectPath = projectPathForNode();
-            node.properties = { ...(node.properties || {}), project_name: project, project_path: projectPath };
+            const projectRoot = projectRootForNode();
+            node.properties = { ...(node.properties || {}), project_name: project,
+              project_path: projectPath, projects_path: projectRoot, project_root: projectRoot };
             const timeline = node._timelineEditor?.timeline || readJson(getW("timeline_data")?.value || "{}");
             const cast = readJson(connectedCastData());
             const sources = connectedSourceNodes();
@@ -13497,26 +13504,30 @@ app.registerExtension({
               },
             };
             try {
-              let document = await mmxdSaveProjectSource(project, "director", directorData, projectPath);
+              let document = await mmxdSaveProjectSource(
+                project, "director", directorData, projectPath, projectRoot);
               if (sources.castingSource) {
                 document = await mmxdSaveProjectSource(project, "casting", sourcePayload(sources.castingSource, {
                   cast_data: sources.castingSource.properties?.cast_data || "",
-                }), projectPath);
+                }), projectPath, projectRoot);
               }
               if (sources.wardrobeSource) {
                 document = await mmxdSaveProjectSource(project, "wardrobe", sourcePayload(sources.wardrobeSource, {
                   wardrobe_data: sources.wardrobeSource.properties?.wardrobe_data || "",
                   cast_wardrobe_output: sources.wardrobeSource.properties?.cast_wardrobe_output || "",
-                }), projectPath);
+                }), projectPath, projectRoot);
               }
               if (enhance) {
                 document = await mmxdSaveProjectSource(project, "enhanced_prompt", sourcePayload(enhance, {
                   output_prompt: String(node.properties?.global_prompt || ""),
-                }), projectPath);
+                }), projectPath, projectRoot);
               }
-              node.properties = { ...(node.properties || {}), project_path: String(document.project_path || projectPath) };
-              renderProjectOptions(await mmxdFetchProjects());
-              setProjectMessage(`Saved ${document.project_name} with ${document.resources?.length || 0} resources.`);
+              node.properties = { ...(node.properties || {}),
+                project_path: String(document.project_path || projectPath),
+                projects_path: String(document.projects_path || projectRoot),
+                project_root: String(document.projects_path || projectRoot) };
+              renderProjectOptions(await mmxdFetchProjects(document.projects_path || projectRoot));
+              setProjectMessage(`Saved to ${document.project_path} with ${document.resources?.length || 0} resources.`);
             } catch (error) {
               setProjectMessage(error.message || String(error), true);
             }
@@ -13544,7 +13555,8 @@ app.registerExtension({
             const project = String(projectSelect.value || projectNameInput.value || "").trim();
             if (!project) return;
             try {
-              const document = await mmxdLoadProject(project, projectPathForNode());
+              const document = await mmxdLoadProject(
+                project, projectPathForNode(), projectRootForNode());
               applyProjectDirector(document.sources?.director);
               projectNameInput.value = project;
               node.properties = { ...(node.properties || {}), project_name: project,
@@ -13554,16 +13566,19 @@ app.registerExtension({
               setProjectMessage(error.message || String(error), true);
             }
           };
-          node._mmxProjectRefresh = async (projectName, projectPath = "") => {
+          node._mmxProjectRefresh = async (projectName, projectPath = "", projectsPath = "") => {
             const project = String(projectName || "").trim();
             if (!project) return;
             try {
-              const document = await mmxdLoadProject(project, projectPath);
+              const effectivePath = projectsPath ? "" : projectPath;
+              const document = await mmxdLoadProject(project, effectivePath, projectsPath);
               applyProjectDirector(document.sources?.director);
               projectNameInput.value = project;
               projectSelect.value = project;
               node.properties = { ...(node.properties || {}), project_name: project,
-                project_path: String(document.project_path || projectPath || "") };
+                project_path: String(document.project_path || effectivePath || ""),
+                projects_path: String(document.projects_path || projectsPath || ""),
+                project_root: String(document.projects_path || projectsPath || "") };
               setProjectMessage(`Project: ${project}`);
             } catch (error) {
               setProjectMessage(error.message || String(error), true);
@@ -13585,7 +13600,8 @@ app.registerExtension({
             const link = input?.link != null ? app.graph?.links?.[input.link] : null;
             const source = link ? app.graph?.getNodeById(link.origin_id) : null;
             if (source?.properties?.project_name) void node._mmxProjectRefresh(
-              source.properties.project_name, source.properties.project_path || "");
+              source.properties.project_name, source.properties.project_path || "",
+              source.properties.projects_path || source.properties.project_root || "");
           }, 150);
 
           // Re-read widget values into the panel. Saved values are restored AFTER onNodeCreated,

@@ -407,13 +407,19 @@ app.registerExtension({
       };
 
       let projectSaveTimer = null;
-      const queueProjectSave = (serialized) => {
+      const connectedProjectConfig = () => {
         const input = node.inputs?.find((item) => item.name === "project");
         const link = input?.link != null ? app.graph?.links?.[input.link] : null;
         const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
         const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
-        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
-        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root
+          || node.properties?.projects_path || node.properties?.project_root || "").trim();
+        const path = projectsPath ? "" : String(projectNode?.properties?.project_path
+          || node.properties?.project_path || "").trim();
+        return { project, path, projectsPath };
+      };
+      const queueProjectSave = (serialized) => {
+        const { project, path, projectsPath } = connectedProjectConfig();
         if (!project || (!path && !projectsPath)) return;
         clearTimeout(projectSaveTimer);
         projectSaveTimer = setTimeout(async () => {
@@ -428,12 +434,7 @@ app.registerExtension({
       };
 
       const saveToProjectNow = async () => {
-        const input = node.inputs?.find((item) => item.name === "project");
-        const link = input?.link != null ? app.graph?.links?.[input.link] : null;
-        const projectNode = link ? app.graph?.getNodeById(link.origin_id) : null;
-        const project = String(projectNode?.properties?.project_name || node.properties?.project_name || "").trim();
-        const path = String(projectNode?.properties?.project_path || node.properties?.project_path || "").trim();
-        const projectsPath = String(projectNode?.properties?.projects_path || projectNode?.properties?.project_root || "").trim();
+        const { project, path, projectsPath } = connectedProjectConfig();
         if (!project || (!path && !projectsPath)) {
           setProjectStatus("Connect and configure a Director Project node first.", true);
           return;
@@ -448,7 +449,7 @@ app.registerExtension({
           });
           const result = await response.json();
           if (!response.ok || result.status !== "success") throw new Error(result.message || "Could not save project");
-          setProjectStatus(`Saved ${result.project?.project_name || project}/Wardrobe.`);
+          setProjectStatus(`Saved to ${result.project?.project_path || `${projectsPath}/${project}`}/Wardrobe.`);
         } catch (error) {
           setProjectStatus(error.message || String(error), true);
         } finally {

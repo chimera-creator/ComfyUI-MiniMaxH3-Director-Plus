@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import sys
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("minimax_plan",
@@ -27,6 +28,15 @@ prompt_data_spec = importlib.util.spec_from_file_location(
 prompt_data = importlib.util.module_from_spec(prompt_data_spec)
 sys.modules["minimax_prompt_data"] = prompt_data
 prompt_data_spec.loader.exec_module(prompt_data)
+
+folder_paths_stub = types.ModuleType("folder_paths")
+folder_paths_stub.get_input_directory = lambda: HERE
+sys.modules["folder_paths"] = folder_paths_stub
+projects_spec = importlib.util.spec_from_file_location(
+    "minimax_projects", os.path.join(HERE, "minimax_projects.py"))
+projects = importlib.util.module_from_spec(projects_spec)
+sys.modules["minimax_projects"] = projects
+projects_spec.loader.exec_module(projects)
 
 FPS = 24.0
 _results = []
@@ -88,6 +98,17 @@ check("structured Enhance shots cover duration", structured_shots[-1]["end"], 5.
 structured_segments = prompt_data.shots_to_timeline_segments(structured_shots)
 check("structured Enhance shots become timeline segments", len(structured_segments), 2)
 check("structured Enhance segment starts at correct frame", structured_segments[1]["start"], 60)
+
+# -------------------------------------------------------- canonical project destination
+new_projects_root = os.path.abspath(os.path.join(HERE, "test-project-root"))
+stale_project_path = os.path.abspath(os.path.join(HERE, "Projects", "OldProject"))
+check("Projects root overrides a stale exact project path",
+      projects._project_dir("CurrentProject", project_path=stale_project_path,
+                            projects_path=new_projects_root),
+      os.path.join(new_projects_root, "CurrentProject"))
+check("Legacy exact project path remains supported without a root",
+      projects._project_dir("OldProject", project_path=stale_project_path),
+      stale_project_path)
 
 # ---------------------------------------------------------------- fmt_seconds
 check("fmt_seconds(0)", plan.fmt_seconds(0.0), "0s")

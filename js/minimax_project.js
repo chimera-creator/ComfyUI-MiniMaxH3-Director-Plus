@@ -111,6 +111,9 @@ app.registerExtension({
           const input = other.inputs?.find((item) => item.name === "project");
           const link = input?.link != null ? app.graph.links?.[input.link] : null;
           if (link?.origin_id === node.id) {
+            other.properties = { ...(other.properties || {}),
+              project_name: project, project_path: projectPath,
+              projects_path: root, project_root: root };
             other._mmxProjectRefresh?.(project, projectPath, root, document);
           }
         }
@@ -147,7 +150,7 @@ app.registerExtension({
         try {
           projects = await fetchProjects(selectedRoot);
           renderOptions();
-          if (selectedProject) setStatus(`Project: ${selectedProject}`);
+          if (selectedProject) setStatus(`Project path: ${selectedProjectPath || `${selectedRoot}/${selectedProject}`}`);
         } catch (error) { setStatus(error.message || String(error), true); }
       };
       const loadSelectedProject = async () => {
@@ -156,20 +159,28 @@ app.registerExtension({
         try {
           const document = await loadProject(project, selectedRoot);
           setConfig(document);
-          setStatus(`Loaded ${project}.`);
+          setStatus(`Loaded ${document.project_path || project}.`);
         } catch (error) { setStatus(error.message || String(error), true); }
       };
 
       select.addEventListener("change", () => { void loadSelectedProject(); });
       nameInput.addEventListener("input", () => {
         selectedProject = nameInput.value.trim();
+        selectedProjectPath = "";
         if (projectWidget) projectWidget.value = selectedProject;
-        node.properties = { ...(node.properties || {}), project_name: selectedProject };
+        if (legacyPathWidget) legacyPathWidget.value = "";
+        node.properties = { ...(node.properties || {}),
+          project_name: selectedProject, project_path: "" };
+        broadcast({ project_name: selectedProject, project_path: "", projects_path: selectedRoot });
       });
       rootInput.addEventListener("change", () => {
         selectedRoot = rootInput.value.trim();
+        selectedProjectPath = "";
         if (projectsPathWidget) projectsPathWidget.value = selectedRoot;
-        node.properties = { ...(node.properties || {}), projects_path: selectedRoot, project_root: selectedRoot };
+        if (legacyPathWidget) legacyPathWidget.value = "";
+        node.properties = { ...(node.properties || {}), project_path: "",
+          projects_path: selectedRoot, project_root: selectedRoot };
+        broadcast({ project_name: selectedProject, project_path: "", projects_path: selectedRoot });
         void refreshProjects();
       });
       browse.addEventListener("click", async () => {
@@ -180,9 +191,13 @@ app.registerExtension({
           if (result.status !== "success") throw new Error(result.message || "Could not browse for a folder");
           if (result.path) {
             selectedRoot = String(result.path);
+            selectedProjectPath = "";
             rootInput.value = selectedRoot;
             if (projectsPathWidget) projectsPathWidget.value = selectedRoot;
-            node.properties = { ...(node.properties || {}), projects_path: selectedRoot, project_root: selectedRoot };
+            if (legacyPathWidget) legacyPathWidget.value = "";
+            node.properties = { ...(node.properties || {}), project_path: "",
+              projects_path: selectedRoot, project_root: selectedRoot };
+            broadcast({ project_name: selectedProject, project_path: "", projects_path: selectedRoot });
             await refreshProjects();
             setStatus("Projects folder selected. Choose or create a project.");
           }
@@ -200,7 +215,7 @@ app.registerExtension({
           setConfig(document);
           projects = await fetchProjects(selectedRoot);
           renderOptions();
-          setStatus(`Ready: ${document.project_name}.`);
+          setStatus(`Ready: ${document.project_path || document.project_name}.`);
         } catch (error) { setStatus(error.message || String(error), true); }
         finally { create.disabled = false; }
       });
@@ -209,7 +224,30 @@ app.registerExtension({
       rootRow.appendChild(rootLabel); rootRow.appendChild(rootInput); rootRow.appendChild(browse);
       container.appendChild(row); container.appendChild(rootRow); container.appendChild(help); container.appendChild(status);
       rootInput.value = selectedRoot; nameInput.value = selectedProject;
-      renderOptions(); void refreshProjects();
+      const restoreConfiguredValues = () => {
+        selectedProject = String(node.properties?.project_name || projectWidget?.value || "").trim();
+        selectedRoot = String(node.properties?.projects_path || node.properties?.project_root
+          || projectsPathWidget?.value || "").trim();
+        selectedProjectPath = String(node.properties?.project_path || "").trim();
+        nameInput.value = selectedProject;
+        rootInput.value = selectedRoot;
+        renderOptions();
+        broadcast({ project_name: selectedProject, project_path: selectedProjectPath,
+          projects_path: selectedRoot });
+        void refreshProjects();
+      };
+      node._mmxRestoreProjectConfig = restoreConfiguredValues;
+      renderOptions();
+      setTimeout(restoreConfiguredValues, 0);
+      setTimeout(restoreConfiguredValues, 100);
+    };
+
+    const originalConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+      const result = originalConfigure?.apply(this, arguments);
+      setTimeout(() => this._mmxRestoreProjectConfig?.(), 0);
+      setTimeout(() => this._mmxRestoreProjectConfig?.(), 100);
+      return result;
     };
   },
 });

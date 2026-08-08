@@ -480,6 +480,11 @@ below the chosen root:
   Director/                    # Director and enhanced-prompt source snapshots
 ```
 
+The selected **Projects root** is authoritative whenever it is present. Changing or browsing
+to a new root clears any derived path from the previous selection, and saved workflows restore
+and rebroadcast the configured root after reload. Each **SAVE TO PROJECT** result displays the
+full destination path so the write location can be verified directly in the node.
+
 The Director save captures the compiled prompt, prompt metadata, timeline, resolution,
 frame rate, timing window, resize/reference settings, cast connection state, and connected
 source metadata. Wardrobe saves item descriptions, categories, assignments, collages, and
