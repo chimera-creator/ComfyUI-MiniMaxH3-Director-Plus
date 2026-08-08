@@ -98,6 +98,7 @@ check("structured Enhance shots cover duration", structured_shots[-1]["end"], 5.
 structured_segments = prompt_data.shots_to_timeline_segments(structured_shots)
 check("structured Enhance shots become timeline segments", len(structured_segments), 2)
 check("structured Enhance segment starts at correct frame", structured_segments[1]["start"], 60)
+check("structured Enhance prompts render as text segments", structured_segments[0]["type"], "text")
 
 # -------------------------------------------------------- canonical project destination
 new_projects_root = os.path.abspath(os.path.join(HERE, "test-project-root"))

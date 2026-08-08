@@ -6792,7 +6792,11 @@ class TimelineEditor {
             this.ctx.fillText(label, startX + pxWidth / 2, overlayY + overlayH / 2);
             this.ctx.restore();
           }
-        } else if (seg.type === "text") {
+        } else if (seg.type === "text" ||
+                   (seg.type !== "ghost" && String(seg.prompt || "").trim() && !drawSource)) {
+          // Older Enhance JSON labeled prompt-only shots as image segments even though
+          // they had no image. Render those cached segments as text instead of leaving
+          // an unexplained black block on the timeline.
           const pad = 8;
           const boxW = pxWidth - pad * 2;
           if (boxW > 12) {

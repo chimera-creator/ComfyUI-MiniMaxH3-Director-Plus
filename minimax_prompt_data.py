@@ -213,7 +213,9 @@ def shots_to_timeline_segments(shots, fps=24.0):
         length = max(1, int(round(max(0.0, float(shot.get("length", 0.0))) * fps)))
         timeline_segments.append({
             "id": "enhance-shot-%d" % index,
-            "type": "image",
+            # Enhance shots carry timing and prose, not a timeline keyframe image.
+            # Mark them as text so the Director canvas renders the segment prompt.
+            "type": "text",
             "start": int(round(start * fps)),
             "length": length,
             "prompt": str(shot.get("prompt") or "").strip(),
